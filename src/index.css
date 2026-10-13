@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 2mm 3mm 2mm 3mm;
+  }
+
+  html, body {
+    height: 100% !important;
+    max-height: 297mm !important;
+    overflow: hidden !important;
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 7.5pt !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  header, footer, nav, button, .print\:hidden {
+    display: none !important;
+  }
+
+  main {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+  }
+
+  /* Single-page strict constraint for report cards (Must never exceed 1 page) */
+  #printable-report-sheet {
+    box-shadow: none !important;
+    border: 1px solid #111 !important;
+    padding: 1.8mm 2.2mm !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: 204mm !important;
+    max-height: 291mm !important;
+    height: auto !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    page-break-before: avoid !important;
+    break-before: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  #printable-report-sheet * {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Compact table rows in print to prevent 2nd page spillover */
+  #printable-report-sheet table td,
+  #printable-report-sheet table th {
+    padding-top: 0.5px !important;
+    padding-bottom: 0.5px !important;
+    line-height: 1.15 !important;
+  }
+
+  #portal-printable-result {
+    box-shadow: none !important;
+    border: 1px solid #111 !important;
+    padding: 2.5mm !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: 204mm !important;
+    max-height: 291mm !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    page-break-before: avoid !important;
+    break-before: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  #portal-printable-result * {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  #printable-broadsheet {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+}

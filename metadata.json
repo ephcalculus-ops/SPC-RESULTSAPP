@@ -1,0 +1,6 @@
+{
+  "name": "ST PAUL COLLEGE - Terminal Results & Broadsheet Portal",
+  "description": "Centralized examination and terminal result portal for ST PAUL COLLEGE, Gwagwalada. Supports independent grading for 30+ teachers, 200+ students, automated CA computation, Google Sheets cloud synchronization, and official Learner's Terminal Report Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
