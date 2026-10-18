@@ -253,22 +253,22 @@ export const TeacherSignupModal: React.FC<TeacherSignupModalProps> = ({
         role="dialog"
         aria-modal="true"
       >
-        {/* Header */}
-        <div className="bg-gradient-to-r from-[#7a0c0c] via-[#8f1212] to-[#690707] text-white px-6 py-4 flex items-center justify-between border-b-2 border-amber-400">
+        {/* Header (ROYAL BLUE) */}
+        <div className="bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] text-white px-6 py-4 flex items-center justify-between border-b-2 border-blue-400">
           <div className="flex items-center space-x-3">
-            <div className="w-11 h-11 rounded-xl bg-white p-1 border-2 border-amber-400 shadow-md flex items-center justify-center overflow-hidden shrink-0">
+            <div className="w-11 h-11 rounded-xl bg-white p-1 border-2 border-blue-300 shadow-md flex items-center justify-center overflow-hidden shrink-0">
               <img src={DEFAULT_SCHOOL_LOGO} alt="Crest" className="max-h-full max-w-full object-contain" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="text-lg font-black text-amber-300 font-serif tracking-wide">
+                <h3 className="text-lg font-black text-white font-serif tracking-wide">
                   Teacher Portal & Score Entry Access
                 </h3>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400 text-red-950 uppercase">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400 text-blue-950 uppercase">
                   Academic Staff
                 </span>
               </div>
-              <p className="text-xs text-amber-100/90 font-medium">
+              <p className="text-xs text-blue-100/90 font-medium">
                 {settings?.schoolName || 'ST PAUL COLLEGE'} • Upload Continuous Assessment & Terminal Exam Marks
               </p>
             </div>
@@ -276,7 +276,7 @@ export const TeacherSignupModal: React.FC<TeacherSignupModalProps> = ({
 
           <button
             onClick={onClose}
-            className="text-amber-200 hover:text-white hover:bg-red-800/80 p-1.5 rounded-lg transition"
+            className="text-blue-100 hover:text-white hover:bg-blue-800/80 p-1.5 rounded-lg transition"
             title="Close"
           >
             <X className="w-5 h-5" />
@@ -383,7 +383,7 @@ export const TeacherSignupModal: React.FC<TeacherSignupModalProps> = ({
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Emmanuel"
+                      placeholder="First Name"
                       value={firstName}
                       onChange={e => setFirstName(e.target.value)}
                       className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
@@ -719,7 +719,7 @@ export const TeacherSignupModal: React.FC<TeacherSignupModalProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Jude, Chioma, STP/TCH/003, or teacher@stpaul.edu.ng"
+                    placeholder="e.g. Staff ID (STP/ADMIN/001), Name, or Email"
                     value={loginIdentifier}
                     onChange={e => setLoginIdentifier(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"

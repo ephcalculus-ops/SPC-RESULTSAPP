@@ -2,7 +2,11 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Student, Teacher, SchoolSettings, SubjectScore } from '../types';
 import { 
   SCHOOL_CLASSES, 
+  PRIMARY_CLASSES,
   isJuniorClass, 
+  isPrimaryClass,
+  isSeniorClass,
+  getSchoolClasses,
   getSubjectsForClass, 
   getCAConfig, 
   computeTotal, 
@@ -67,20 +71,23 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
   addLog,
 }) => {
   const isStaffAdmin = currentUser.role === 'super_admin' || currentUser.role === 'admin' || currentUser.role === 'exam_officer';
+  const schoolClasses = useMemo(() => getSchoolClasses(settings), [settings]);
+  const fallbackDefaultClass = schoolClasses[0] || (settings.section === 'primary' ? 'PRIMARY 1 A' : 'JSS 1 A');
+
   const allowedClasses = useMemo(() => {
-    if (isStaffAdmin) return SCHOOL_CLASSES;
+    if (isStaffAdmin) return schoolClasses;
     const list = [...(currentUser.assignedClasses || [])];
     if (currentUser.isFormTeacherOf && !list.includes(currentUser.isFormTeacherOf)) {
       list.push(currentUser.isFormTeacherOf);
     }
     const normalized = list.map(c => normalizeClass(c));
-    return normalized.length > 0 ? Array.from(new Set(normalized)) : ['JSS 1 A'];
-  }, [isStaffAdmin, currentUser.assignedClasses, currentUser.isFormTeacherOf]);
+    return normalized.length > 0 ? Array.from(new Set(normalized)) : [fallbackDefaultClass];
+  }, [isStaffAdmin, currentUser.assignedClasses, currentUser.isFormTeacherOf, schoolClasses, fallbackDefaultClass]);
 
   const defaultClass = (initialClass && allowedClasses.includes(normalizeClass(initialClass) as any))
     ? normalizeClass(initialClass)
-    : (allowedClasses[0] || 'JSS 1 A');
-  const defaultSubject = initialSubject || currentUser.assignedSubjects[0] || 'MATHEMATICS';
+    : (allowedClasses[0] || fallbackDefaultClass);
+  const defaultSubject = initialSubject || currentUser.assignedSubjects[0] || (settings.section === 'primary' ? 'ENGLISH STUDIES' : 'MATHEMATICS');
 
   const [selectedClass, setSelectedClass] = useState<string>(defaultClass);
   const [selectedSubject, setSelectedSubject] = useState<string>(defaultSubject);
@@ -106,7 +113,7 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
   const [localScores, setLocalScores] = useState<Record<string, { ca1: number | null; ca2: number | null; ca3: number | null; ca4: number | null; exam: number | null }>>({});
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
-  const classCurriculumSubjects = useMemo(() => getSubjectsForClass(selectedClass), [selectedClass]);
+  const classCurriculumSubjects = useMemo(() => getSubjectsForClass(selectedClass, settings), [selectedClass, settings]);
   const allowedSubjects = useMemo(() => {
     if (isStaffAdmin) return classCurriculumSubjects;
     const assigned = currentUser.assignedSubjects || [];
@@ -181,9 +188,23 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
       };
     }
 
+    // Check for pending phone draft to prevent loss during phone calls/screen locks
+    let hasDraft = false;
+    try {
+      const draftKey = `stpaul_draft_scores_${selectedClass}_${selectedSubject}_${selectedTerm}`;
+      const savedDraft = localStorage.getItem(draftKey);
+      if (savedDraft) {
+        const parsedDraft = JSON.parse(savedDraft);
+        if (parsedDraft && typeof parsedDraft === 'object') {
+          Object.assign(initialMap, parsedDraft);
+          hasDraft = true;
+        }
+      }
+    } catch (_) {}
+
     setLocalScores(initialMap);
-    setHasUnsavedChanges(false);
-    setFeedbackMessage(null);
+    setHasUnsavedChanges(hasDraft);
+    setFeedbackMessage(hasDraft ? 'Restored unsaved draft from your mobile session.' : null);
     setFocusIndex(0);
   }, [isOpen, selectedClass, selectedSubject, selectedTerm, students]);
 
@@ -224,13 +245,20 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
       if (field === 'exam') numVal = Math.min(caConfig.examMax, Math.max(0, numVal));
     }
 
-    setLocalScores(prev => ({
-      ...prev,
-      [studentId]: {
-        ...(prev[studentId] || { ca1: null, ca2: null, ca3: null, ca4: null, exam: null }),
-        [field]: numVal,
-      },
-    }));
+    setLocalScores(prev => {
+      const nextScores = {
+        ...prev,
+        [studentId]: {
+          ...(prev[studentId] || { ca1: null, ca2: null, ca3: null, ca4: null, exam: null }),
+          [field]: numVal,
+        },
+      };
+      try {
+        const draftKey = `stpaul_draft_scores_${selectedClass}_${selectedSubject}_${selectedTerm}`;
+        localStorage.setItem(draftKey, JSON.stringify(nextScores));
+      } catch (_) {}
+      return nextScores;
+    });
     setHasUnsavedChanges(true);
   };
 
@@ -326,18 +354,25 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
 
     batchUpdateSubjectScores(selectedClass, selectedSubject, updates, selectedTerm);
     setHasUnsavedChanges(false);
-    setFeedbackMessage(`✓ Saved marks for ${updates.length} students in ${selectedClass} (${selectedSubject})!`);
+    
+    // Clear temporary local draft once firmly saved & synchronized
+    try {
+      const draftKey = `stpaul_draft_scores_${selectedClass}_${selectedSubject}_${selectedTerm}`;
+      localStorage.removeItem(draftKey);
+    } catch (_) {}
+
+    setFeedbackMessage(`✓ Marks Firmly Secured & Synchronized to Cloud Firestore! (${updates.length} students in ${selectedClass} - ${selectedSubject})`);
 
     if (addLog) {
       addLog(
-        'Direct Mark Entry',
-        `Teacher ${currentUser.name} (${currentUser.staffId}) entered marks directly for ${updates.length} students in ${selectedClass} - ${selectedSubject} (${selectedTerm})`
+        'Direct Mark Entry & Cloud Sync',
+        `Teacher ${currentUser.name} (${currentUser.staffId}) entered & synchronized marks for ${updates.length} students in ${selectedClass} - ${selectedSubject} (${selectedTerm})`
       );
     }
 
     setTimeout(() => {
       setFeedbackMessage(null);
-    }, 3500);
+    }, 4000);
   };
 
   const handleSimulateDemo = () => {
@@ -374,25 +409,25 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
       {/* Main Container: Full screen on mobile phones, rounded modal on tablet & desktop */}
       <div className="w-full h-full sm:h-[92vh] sm:max-w-5xl bg-white sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-amber-300/40">
         
-        {/* 1. Header Banner - Compact & Touch-Friendly */}
-        <div className="px-4 py-3 sm:py-3.5 bg-gradient-to-r from-red-950 via-red-900 to-[#7a0c0c] text-white flex items-center justify-between border-b-2 border-amber-400 shrink-0 shadow-sm">
+        {/* 1. Header Banner - Compact & Touch-Friendly (ROYAL BLUE) */}
+        <div className="px-4 py-3 sm:py-3.5 bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] text-white flex items-center justify-between border-b-2 border-blue-400 shrink-0 shadow-sm">
           <div className="flex items-center space-x-2.5 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-400/20 border border-amber-400/60 flex items-center justify-center text-amber-300 shrink-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 border border-blue-200/60 flex items-center justify-center text-white shrink-0">
               <BookOpen className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center space-x-1.5 flex-wrap">
-                <h3 className="font-bold text-sm sm:text-base text-amber-300 font-serif truncate">
+                <h3 className="font-bold text-sm sm:text-base text-white font-serif truncate">
                   Direct Mark Entry
                 </h3>
-                <span className="bg-amber-400 text-red-950 text-[10px] font-black px-1.5 py-0.2 rounded shadow-xs">
+                <span className="bg-amber-400 text-blue-950 text-[10px] font-black px-1.5 py-0.2 rounded shadow-xs">
                   {selectedClass}
                 </span>
-                <span className="bg-red-800 text-amber-200 border border-amber-400/50 text-[10px] font-semibold px-1.5 py-0.2 rounded hidden sm:inline truncate max-w-[150px]">
+                <span className="bg-blue-900/80 text-blue-100 border border-blue-300/50 text-[10px] font-semibold px-1.5 py-0.2 rounded hidden sm:inline truncate max-w-[150px]">
                   {selectedSubject}
                 </span>
               </div>
-              <p className="text-[11px] text-amber-100/90 truncate">
+              <p className="text-[11px] text-blue-100/90 truncate">
                 {currentUser.name} • <span className="font-mono">{scoredStudents}/{totalStudents} Scored</span> ({completionPercentage}%)
               </p>
             </div>
@@ -400,14 +435,14 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
 
           <div className="flex items-center space-x-1.5 shrink-0">
             {/* View Mode Toggle */}
-            <div className="bg-red-950/90 p-0.5 rounded-lg border border-amber-400/40 flex items-center">
+            <div className="bg-blue-950/80 p-0.5 rounded-lg border border-blue-300/40 flex items-center">
               <button
                 type="button"
                 onClick={() => setViewMode('cards')}
                 className={`p-1.5 sm:px-2.5 sm:py-1 rounded-md text-xs font-bold transition flex items-center space-x-1 ${
                   viewMode === 'cards' 
-                    ? 'bg-amber-400 text-red-950 shadow-sm' 
-                    : 'text-amber-200 hover:text-white'
+                    ? 'bg-white text-blue-950 shadow-sm' 
+                    : 'text-blue-200 hover:text-white'
                 }`}
                 title="Phone Cards View"
               >
@@ -420,8 +455,8 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                 onClick={() => setViewMode('focus')}
                 className={`p-1.5 sm:px-2.5 sm:py-1 rounded-md text-xs font-bold transition flex items-center space-x-1 ${
                   viewMode === 'focus' 
-                    ? 'bg-amber-400 text-red-950 shadow-sm' 
-                    : 'text-amber-200 hover:text-white'
+                    ? 'bg-white text-blue-950 shadow-sm' 
+                    : 'text-blue-200 hover:text-white'
                 }`}
                 title="1-by-1 Step-Through Phone Mode"
               >
@@ -434,8 +469,8 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                 onClick={() => setViewMode('table')}
                 className={`p-1.5 sm:px-2.5 sm:py-1 rounded-md text-xs font-bold transition flex items-center space-x-1 ${
                   viewMode === 'table' 
-                    ? 'bg-amber-400 text-red-950 shadow-sm' 
-                    : 'text-amber-200 hover:text-white'
+                    ? 'bg-white text-blue-950 shadow-sm' 
+                    : 'text-blue-200 hover:text-white'
                 }`}
                 title="Broadsheet Table View (Tablet & PC)"
               >
@@ -446,7 +481,7 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
 
             <button
               onClick={onClose}
-              className="text-amber-200 hover:text-white p-1.5 rounded-lg hover:bg-red-800 transition touch-manipulation"
+              className="text-blue-200 hover:text-white p-1.5 rounded-lg hover:bg-blue-800 transition touch-manipulation"
               aria-label="Close"
             >
               <X className="w-5 h-5" />
@@ -592,7 +627,7 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                     onClick={() => setSelectedTerm(t)}
                     className={`px-2 py-1 rounded-md text-[11px] font-bold transition flex-1 text-center ${
                       selectedTerm === t
-                        ? 'bg-red-900 text-white shadow-xs'
+                        ? 'bg-blue-800 text-white shadow-xs'
                         : 'text-slate-700 hover:text-slate-900'
                     }`}
                   >
@@ -671,7 +706,7 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                       {/* Card Header: Student Name + Live Total Score */}
                       <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100">
                         <div className="flex items-center space-x-2.5 min-w-0">
-                          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-red-950 text-amber-300 flex items-center justify-center font-bold text-xs shrink-0 font-mono">
+                          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-blue-900 text-blue-100 flex items-center justify-center font-bold text-xs shrink-0 font-mono shadow-xs">
                             {index + 1}
                           </div>
                           <div className="min-w-0">
@@ -895,32 +930,32 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                       type="button"
                       disabled={focusIndex >= filteredStudents.length - 1}
                       onClick={() => setFocusIndex(prev => Math.min(filteredStudents.length - 1, prev + 1))}
-                      className="px-3 py-2 rounded-xl bg-red-950 hover:bg-red-900 text-amber-300 font-bold text-xs flex items-center space-x-1 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation"
+                      className="px-3 py-2 rounded-xl bg-blue-800 hover:bg-blue-900 text-white font-bold text-xs flex items-center space-x-1 disabled:opacity-30 disabled:cursor-not-allowed touch-manipulation shadow-xs"
                     >
                       <span>Next</span>
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
 
-                  {/* Student Identity Card */}
-                  <div className="bg-gradient-to-r from-red-950 to-red-900 text-white rounded-xl p-3.5 flex items-center justify-between border border-amber-400/60 shadow-xs">
+                  {/* Student Identity Card (Royal Blue) */}
+                  <div className="bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] text-white rounded-xl p-3.5 flex items-center justify-between border-2 border-blue-400 shadow-md">
                     <div>
-                      <div className="text-[10px] text-amber-300 font-mono tracking-wider font-bold">
+                      <div className="text-[10px] text-blue-200 font-mono tracking-wider font-bold">
                         {currentFocusStudent.learnerId}
                       </div>
                       <h3 className="text-base font-black font-serif text-white leading-tight">
                         {currentFocusStudent.name}
                       </h3>
-                      <div className="text-[11px] text-amber-100/80 capitalize mt-0.5">
+                      <div className="text-[11px] text-blue-100 capitalize mt-0.5">
                         Gender: {currentFocusStudent.gender}
                       </div>
                     </div>
 
-                    <div className="text-right bg-amber-400/20 border border-amber-400/60 rounded-xl p-2 min-w-[70px]">
-                      <div className="text-2xl font-black text-amber-300 font-mono leading-none">
+                    <div className="text-right bg-white/20 border border-blue-300 rounded-xl p-2 min-w-[70px]">
+                      <div className="text-2xl font-black text-white font-mono leading-none">
                         {currentFocusTotal}
                       </div>
-                      <div className="text-[10px] font-bold text-white mt-1">
+                      <div className="text-[10px] font-bold text-blue-100 mt-1">
                         Grade {currentFocusGrade}
                       </div>
                     </div>
@@ -1011,10 +1046,10 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                     )}
 
                     {/* Terminal Examination */}
-                    <div className="bg-amber-50 p-3 rounded-xl border-2 border-amber-300 flex items-center justify-between shadow-xs">
+                    <div className="bg-blue-50 p-3 rounded-xl border-2 border-blue-300 flex items-center justify-between shadow-xs">
                       <div>
-                        <div className="font-black text-xs text-red-950 uppercase tracking-wide">Terminal Examination (Exam)</div>
-                        <div className="text-[10px] text-amber-800">Max Score: {caConfig.examMax}%</div>
+                        <div className="font-black text-xs text-blue-950 uppercase tracking-wide">Terminal Examination (Exam)</div>
+                        <div className="text-[10px] text-blue-700">Max Score: {caConfig.examMax}%</div>
                       </div>
                       <input
                         type="number"
@@ -1026,7 +1061,7 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                         value={currentFocusScore?.exam ?? ''}
                         onChange={e => handleScoreChange(currentFocusStudent.id, 'exam', e.target.value)}
                         placeholder={`0-${caConfig.examMax}`}
-                        className="w-24 h-12 text-center bg-white border-2 border-amber-500 rounded-xl font-black text-xl text-red-950 focus:ring-2 focus:ring-amber-600 focus:outline-none shadow-sm"
+                        className="w-24 h-12 text-center bg-white border-2 border-blue-500 rounded-xl font-black text-xl text-blue-950 focus:ring-2 focus:ring-blue-600 focus:outline-none shadow-sm"
                       />
                     </div>
                   </div>
@@ -1037,7 +1072,7 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                       <button
                         type="button"
                         onClick={() => setFocusIndex(prev => prev + 1)}
-                        className="w-full h-12 rounded-xl bg-gradient-to-r from-red-900 to-red-800 text-amber-300 font-black text-sm flex items-center justify-center space-x-2 shadow-md border border-amber-400 active:scale-98 transition touch-manipulation"
+                        className="w-full h-12 rounded-xl bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] text-white font-black text-sm flex items-center justify-center space-x-2 shadow-md border border-blue-400 active:scale-98 transition touch-manipulation"
                       >
                         <span>Next Learner</span>
                         <ArrowRight className="w-4 h-4" />
@@ -1277,12 +1312,12 @@ export const DirectScoreInputModal: React.FC<DirectScoreInputModalProps> = ({
                 !hasEditPermission
                   ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed'
                   : hasUnsavedChanges
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-red-950 border-amber-300 animate-pulse shadow-amber-900/20'
-                  : 'bg-gradient-to-r from-red-900 to-red-950 text-amber-300 border-amber-400 hover:text-white'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-blue-950 border-amber-300 animate-pulse shadow-amber-900/20 font-black'
+                  : 'bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] text-white border-blue-400 hover:from-blue-800 hover:to-indigo-900 shadow-md'
               }`}
             >
               <Save className="w-4 h-4" />
-              <span>Save All Marks ({scoredStudents}/{totalStudents})</span>
+              <span>Save & Synchronize Marks ({scoredStudents}/{totalStudents})</span>
             </button>
           </div>
         </div>

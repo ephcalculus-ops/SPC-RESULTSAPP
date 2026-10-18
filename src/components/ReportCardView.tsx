@@ -1198,7 +1198,7 @@ export const ReportCardView: React.FC<ReportCardViewProps> = ({
             <div className="text-right shrink-0 pt-1 sm:pt-0 font-serif italic text-[11px] text-slate-700 border-t sm:border-t-0 border-slate-200 w-full sm:w-auto print:text-[7pt] print:pt-0">
               <span className="font-sans text-[8px] font-bold text-slate-500 uppercase block print:text-[6px]">Sign & Date:</span>
               <span className="underline decoration-slate-400">
-                {isJunior ? 'Mr. Jude Chukwuka (23/07/2026)' : 'Mrs. Ngozi Eze (23/07/2026)'}
+                {currentUser?.role === 'form_teacher' && currentUser.isFormTeacherOf === selectedStudent.className ? `${currentUser.name} (${new Date().toLocaleDateString('en-GB')})` : 'Form Teacher ________________'}
               </span>
             </div>
           </div>

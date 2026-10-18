@@ -57,7 +57,10 @@ export const TeacherProfileModal: React.FC<TeacherProfileModalProps> = ({
   const [staffId, setStaffId] = useState(teacher.staffId || '');
   const [department, setDepartment] = useState(teacher.department || 'Sciences & Mathematics');
   const [qualification, setQualification] = useState(teacher.qualification || 'B.Sc (Ed)');
-  const [gender, setGender] = useState<'MALE' | 'FEMALE'>(teacher.gender || 'MALE');
+  const [gender, setGender] = useState<'MALE' | 'FEMALE' | 'NA'>(teacher.gender || 'FEMALE');
+  const [mainClass, setMainClass] = useState(teacher.mainClass || '');
+  const [classArm, setClassArm] = useState(teacher.classArm || '');
+  const [dor, setDor] = useState(teacher.dor || '');
   const [dateOfBirth, setDateOfBirth] = useState(teacher.dateOfBirth || '1985-05-12');
   const [stateOfOrigin, setStateOfOrigin] = useState(teacher.stateOfOrigin || 'FCT Abuja');
   const [address, setAddress] = useState(teacher.address || 'Gwagwalada, Abuja, FCT');
@@ -150,6 +153,9 @@ export const TeacherProfileModal: React.FC<TeacherProfileModalProps> = ({
       department,
       qualification,
       gender,
+      mainClass: mainClass.trim() || undefined,
+      classArm: classArm.trim() || undefined,
+      dor: dor.trim() || undefined,
       dateOfBirth,
       stateOfOrigin,
       address,
@@ -178,22 +184,22 @@ export const TeacherProfileModal: React.FC<TeacherProfileModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl border-2 border-slate-300 w-full max-w-3xl overflow-hidden flex flex-col max-h-[92vh]">
         
-        {/* Modal Top Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-red-950 via-[#7a0c0c] to-red-950 text-white flex items-center justify-between border-b-2 border-amber-400">
+        {/* Modal Top Header (ROYAL BLUE) */}
+        <div className="px-6 py-4 bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] text-white flex items-center justify-between border-b-2 border-blue-400">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-400 text-red-950 flex items-center justify-center font-black shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-white text-blue-900 flex items-center justify-center font-black shadow-md">
               <User className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="font-bold text-base text-amber-200 font-serif">
+                <h3 className="font-bold text-base text-white font-serif">
                   Staff Profile &amp; Biodata Editor
                 </h3>
-                <span className="text-[10px] bg-red-900 border border-amber-400/50 text-amber-300 px-2 py-0.5 rounded-full font-bold uppercase">
+                <span className="text-[10px] bg-blue-950 border border-blue-300/50 text-blue-100 px-2 py-0.5 rounded-full font-bold uppercase">
                   {teacher.role.replace('_', ' ')}
                 </span>
               </div>
-              <p className="text-xs text-amber-100/80">
+              <p className="text-xs text-blue-100/90">
                 {isEditingSelf ? 'Edit your personal biodata, contact details, and faculty qualifications' : `Update official profile for ${teacher.name} (${teacher.staffId})`}
               </p>
             </div>
@@ -201,7 +207,7 @@ export const TeacherProfileModal: React.FC<TeacherProfileModalProps> = ({
           
           <button
             onClick={onClose}
-            className="text-amber-200 hover:text-white p-1.5 rounded-lg hover:bg-black/30 transition"
+            className="text-blue-200 hover:text-white p-1.5 rounded-lg hover:bg-blue-800/80 transition"
             title="Close Editor"
           >
             <X className="w-5 h-5" />
@@ -351,11 +357,12 @@ export const TeacherProfileModal: React.FC<TeacherProfileModalProps> = ({
                   <label className="block text-slate-700 font-bold mb-1">Gender *</label>
                   <select
                     value={gender}
-                    onChange={e => setGender(e.target.value as 'MALE' | 'FEMALE')}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    onChange={e => setGender(e.target.value as 'MALE' | 'FEMALE' | 'NA')}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   >
-                    <option value="MALE">MALE</option>
                     <option value="FEMALE">FEMALE</option>
+                    <option value="MALE">MALE</option>
+                    <option value="NA">NA / OTHER</option>
                   </select>
                 </div>
 

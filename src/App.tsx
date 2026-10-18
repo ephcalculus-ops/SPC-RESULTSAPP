@@ -52,7 +52,8 @@ import {
   FileSpreadsheet, 
   ArrowLeft,
   LogOut,
-  UserCheck
+  UserCheck,
+  Smartphone
 } from 'lucide-react';
 
 export default function App() {
@@ -194,6 +195,15 @@ export default function App() {
       setSelectedStudent(store.students[0]);
     }
   }, [store.students, selectedStudent]);
+
+  // Strict isolation: Reset student selection and class selectors whenever school changes
+  useEffect(() => {
+    setSelectedStudent(store.students[0]);
+    const firstCls = store.settings.classes?.[0] || (store.settings.section === 'primary' ? 'PRIMARY 1 A' : 'JSS 1 A');
+    setDirectScoreClass(firstCls);
+    setModalClass(firstCls);
+    setBulkPromotionClass('ALL');
+  }, [store.activeSchoolId]);
 
   // ============================================================
   // MAJESTIC PORTAL GATE (Teachers & Academic Staff + Results Checker)
@@ -378,11 +388,16 @@ export default function App() {
             teachers={store.teachers}
             currentUser={store.currentUser}
             updateTeacher={store.updateTeacher}
+            batchUpdateTeachers={store.batchUpdateTeachers}
+            registerTeacher={store.registerTeacher}
             setCurrentUser={store.setCurrentUser}
             onOpenTeacherSignupModal={() => setIsTeacherSignupModalOpen(true)}
             onNavigateToGradebook={() => setActiveTab('gradebook')}
             onOpenDirectScoreModal={handleOpenDirectScoreModal}
             onDeleteTeacher={store.deleteTeacher}
+            onRestoreOfficialTeachers={store.restoreOfficialTeachers}
+            onSyncTeachersNow={store.syncTeachersNow}
+            cloudSyncStatus={store.cloudSyncInfo}
             onSignOut={handleSignOut}
           />
         )}
@@ -571,6 +586,18 @@ export default function App() {
           </div>
         </div>
       </footer>
+      </div>
+
+      {/* Floating Direct Mark Entry Action Button for Mobile Phones */}
+      <div className="sm:hidden fixed bottom-16 right-4 z-40">
+        <button
+          onClick={() => handleOpenDirectScoreModal()}
+          className="flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-blue-700 via-blue-800 to-indigo-800 text-white font-black text-xs rounded-full shadow-2xl border-2 border-amber-300 active:scale-95 transition"
+          title="Direct Mark Entering on Mobile Phone"
+        >
+          <Smartphone className="w-4 h-4 text-amber-300" />
+          <span>Enter Marks</span>
+        </button>
       </div>
 
       {/* Google Sheets Synchronization Modal */}

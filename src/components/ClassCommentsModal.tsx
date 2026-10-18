@@ -164,20 +164,20 @@ export const ClassCommentsModal: React.FC<ClassCommentsModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-300 w-full max-w-5xl my-8 overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-[#7a0c0c] via-[#8f1212] to-[#690707] p-5 text-white flex items-center justify-between shrink-0">
+        {/* Header (ROYAL BLUE) */}
+        <div className="bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] p-5 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-amber-400 text-red-950 rounded-xl shadow">
+            <div className="p-2.5 bg-white text-blue-900 rounded-xl shadow">
               <MessageSquare className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-lg font-black font-serif text-amber-200 tracking-wide flex items-center gap-2">
+              <h2 className="text-lg font-black font-serif text-white tracking-wide flex items-center gap-2">
                 Class Remarks & Comments Management
-                <span className="text-[10px] bg-red-950 px-2 py-0.5 rounded-full text-amber-300 font-sans font-bold border border-amber-400/40">
+                <span className="text-[10px] bg-blue-950 px-2 py-0.5 rounded-full text-blue-100 font-sans font-bold border border-blue-400/40">
                   {activeTerm}
                 </span>
               </h2>
-              <p className="text-xs text-amber-100/90 mt-0.5">
+              <p className="text-xs text-blue-100/90 mt-0.5">
                 Manage, customize, or auto-generate Form Teacher & Principal comments for all students.
               </p>
             </div>
@@ -185,7 +185,7 @@ export const ClassCommentsModal: React.FC<ClassCommentsModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg bg-red-950/60 hover:bg-red-900 text-amber-200 hover:text-white transition"
+            className="p-1.5 rounded-lg bg-blue-950/60 hover:bg-blue-900 text-blue-200 hover:text-white transition"
           >
             <X className="w-5 h-5" />
           </button>

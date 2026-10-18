@@ -267,7 +267,7 @@ export const SchoolStampUploadModal: React.FC<SchoolStampUploadModalProps> = ({
                       Form Teacher Certification
                     </span>
                     <span className="font-serif italic text-xs text-slate-800 block">
-                      Mrs. Ngozi Eze
+                      Form Teacher Signature
                     </span>
                     <span className="text-[8px] text-slate-500 font-mono">Date: 23/07/2026</span>
                   </div>

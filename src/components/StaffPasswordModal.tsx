@@ -111,28 +111,28 @@ export const StaffPasswordModal: React.FC<StaffPasswordModalProps> = ({
           }
         `}</style>
 
-        {/* Modal Header */}
-        <div className="bg-gradient-to-r from-red-950 via-[#7a0c0c] to-red-950 px-6 py-5 border-b border-amber-500/40 relative">
+        {/* Modal Header (ROYAL BLUE) */}
+        <div className="bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] px-6 py-5 border-b border-blue-400 relative">
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-4 top-4 p-1.5 rounded-lg text-amber-200/80 hover:text-white hover:bg-black/30 transition"
+            className="absolute right-4 top-4 p-1.5 rounded-lg text-blue-100 hover:text-white hover:bg-black/30 transition"
             title="Cancel and return to Public Results Checker"
           >
             <X className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center space-x-2 text-amber-300 mb-1.5">
-            <div className="p-2 rounded-xl bg-red-900/80 border border-amber-400/60 shadow-inner">
-              <Lock className="w-5 h-5 text-amber-300" />
+          <div className="flex items-center space-x-2 text-white mb-1.5">
+            <div className="p-2 rounded-xl bg-blue-900/90 border border-blue-300 shadow-inner">
+              <Lock className="w-5 h-5 text-white" />
             </div>
-            <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono text-[10px] font-bold uppercase tracking-wider">
+            <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-white/20 text-white border border-blue-200/50 font-mono text-[10px] font-bold uppercase tracking-wider">
               <Sparkles className="w-2.5 h-2.5 mr-0.5" />
               <span>Staff Security Gate</span>
             </div>
           </div>
 
-          <h3 className="text-lg font-black text-amber-200 font-serif tracking-wide">
+          <h3 className="text-lg font-black text-white font-serif tracking-wide">
             {title}
           </h3>
           <p className="text-xs text-amber-100/80 mt-1 leading-relaxed">

@@ -466,7 +466,7 @@ export const SchoolOnboardingModal: React.FC<SchoolOnboardingModalProps> = ({
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. Mr. Kenneth Adams"
+                      placeholder="e.g. Examination Officer Name"
                       value={examOfficerName}
                       onChange={e => setExamOfficerName(e.target.value)}
                       className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none font-medium"

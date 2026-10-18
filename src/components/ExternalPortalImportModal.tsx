@@ -33,7 +33,7 @@ interface ExternalPortalImportModalProps {
       sourcePortal?: string;
     }>,
     mode: 'merge' | 'append'
-  ) => { imported: number; updated: number; total: number };
+  ) => Promise<{ imported: number; updated: number; total: number }> | { imported: number; updated: number; total: number };
 }
 
 interface ParsedImportStudent {
@@ -120,25 +120,53 @@ export const ExternalPortalImportModal: React.FC<ExternalPortalImportModalProps>
         setParsedStudents(parsed);
       } else {
         // Parse CSV format
-        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        const cleanText = text.replace(/^\uFEFF/, '').trim();
+        const lines = cleanText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
         if (lines.length < 2) {
           throw new Error('CSV must contain a header row and at least one student data row.');
         }
 
-        const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+        const firstLine = lines[0];
+        const delimiter = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
+
+        const parseCsvRowWithDelimiter = (lineText: string): string[] => {
+          const result: string[] = [];
+          let insideQuotes = false;
+          let field = '';
+
+          for (let i = 0; i < lineText.length; i++) {
+            const char = lineText[i];
+            if (char === '"' || char === "'") {
+              insideQuotes = !insideQuotes;
+            } else if (char === delimiter && !insideQuotes) {
+              result.push(field.trim().replace(/^["']|["']$/g, ''));
+              field = '';
+            } else {
+              field += char;
+            }
+          }
+          result.push(field.trim().replace(/^["']|["']$/g, ''));
+          return result;
+        };
+
+        const headers = parseCsvRowWithDelimiter(lines[0]).map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
         
-        // Find header column indices
-        const nameIdx = headers.findIndex(h => h.includes('name'));
-        const classIdx = headers.findIndex(h => h.includes('class'));
-        const idIdx = headers.findIndex(h => h.includes('id') || h.includes('admission') || h.includes('reg'));
+        // Find header column indices prioritizing clean student names over guardian/parent names
+        let nameIdx = headers.findIndex(h => h === 'fullname' || h === 'studentname' || h === 'learnername' || h === 'pupilname' || h === 'name');
+        if (nameIdx === -1) {
+          nameIdx = headers.findIndex(h => h.includes('name') && !h.includes('guardian') && !h.includes('parent') && !h.includes('father') && !h.includes('mother'));
+        }
+
+        const classIdx = headers.findIndex(h => h.includes('class') || h.includes('grade') || h.includes('level') || h.includes('arm'));
+        const idIdx = headers.findIndex(h => h.includes('learner') || h.includes('admission') || h.includes('reg') || h === 'id' || h.includes('matric'));
         const genderIdx = headers.findIndex(h => h.includes('gender') || h.includes('sex'));
         const dobIdx = headers.findIndex(h => h.includes('dob') || h.includes('birth'));
         const bloodIdx = headers.findIndex(h => h.includes('blood'));
-        const genoIdx = headers.findIndex(h => h.includes('genotype'));
-        const guardianNameIdx = headers.findIndex(h => h.includes('guardian') || h.includes('parent'));
-        const guardianPhoneIdx = headers.findIndex(h => h.includes('phone') || h.includes('mobile'));
-        const stateIdx = headers.findIndex(h => h.includes('state'));
-        const addressIdx = headers.findIndex(h => h.includes('address'));
+        const genoIdx = headers.findIndex(h => h.includes('geno'));
+        const guardianNameIdx = headers.findIndex(h => h.includes('guardian') || h.includes('parent') || h.includes('father') || h.includes('mother'));
+        const guardianPhoneIdx = headers.findIndex(h => (h.includes('phone') || h.includes('mobile') || h.includes('tel')) && !h.includes('student'));
+        const stateIdx = headers.findIndex(h => h.includes('state') || h.includes('origin'));
+        const addressIdx = headers.findIndex(h => h.includes('address') || h.includes('residence'));
         const photoIdx = headers.findIndex(h => h.includes('photo') || h.includes('passport'));
 
         if (nameIdx === -1 && classIdx === -1) {
@@ -148,14 +176,14 @@ export const ExternalPortalImportModal: React.FC<ExternalPortalImportModalProps>
         const parsed: ParsedImportStudent[] = [];
 
         for (let i = 1; i < lines.length; i++) {
-          const row = parseCsvRow(lines[i]);
+          const row = parseCsvRowWithDelimiter(lines[i]);
           if (row.length === 0 || !row[nameIdx >= 0 ? nameIdx : 0]) continue;
 
           const name = row[nameIdx >= 0 ? nameIdx : 0]?.trim() || `Student ${i}`;
           const rawClass = row[classIdx >= 0 ? classIdx : 1]?.trim() || 'JSS 1 A';
           const className = SCHOOL_CLASSES.find(c => c.toLowerCase() === rawClass.toLowerCase()) || rawClass;
           const rawGender = row[genderIdx >= 0 ? genderIdx : 2]?.trim().toUpperCase();
-          const gender: 'MALE' | 'FEMALE' = rawGender && rawGender.startsWith('F') ? 'FEMALE' : 'MALE';
+          const gender: 'MALE' | 'FEMALE' = rawGender && (rawGender.startsWith('F') || rawGender === 'GIRL') ? 'FEMALE' : 'MALE';
           const learnerId = row[idIdx >= 0 ? idIdx : 3]?.trim() || `SPC/EXT/${Math.floor(100000 + Math.random() * 900000)}`;
 
           parsed.push({
@@ -190,6 +218,7 @@ export const ExternalPortalImportModal: React.FC<ExternalPortalImportModalProps>
   };
 
   const parseCsvRow = (text: string): string[] => {
+    const delimiter = (text.match(/;/g) || []).length > (text.match(/,/g) || []).length ? ';' : ',';
     const result: string[] = [];
     let insideQuotes = false;
     let field = '';
@@ -198,7 +227,7 @@ export const ExternalPortalImportModal: React.FC<ExternalPortalImportModalProps>
       const char = text[i];
       if (char === '"' || char === "'") {
         insideQuotes = !insideQuotes;
-      } else if (char === ',' && !insideQuotes) {
+      } else if (char === delimiter && !insideQuotes) {
         result.push(field.trim());
         field = '';
       } else {
@@ -375,25 +404,29 @@ FCT/2026/9003,"IBRAHIM HASSAN SULEIMAN","JSS 1 A","MALE","2012-01-20","A+","AS",
     document.body.removeChild(link);
   };
 
-  const handleCommitImport = () => {
+  const handleCommitImport = async () => {
     if (parsedStudents.length === 0) return;
 
-    const result = onImportStudents(
-      parsedStudents.map(p => ({
-        name: p.name,
-        className: p.className,
-        gender: p.gender,
-        learnerId: p.learnerId,
-        passportPhoto: p.passportPhoto,
-        biodata: p.biodata,
-        sourcePortal: p.sourcePortal,
-      })),
-      importMode
-    );
+    try {
+      const result = await onImportStudents(
+        parsedStudents.map(p => ({
+          name: p.name,
+          className: p.className,
+          gender: p.gender,
+          learnerId: p.learnerId,
+          passportPhoto: p.passportPhoto,
+          biodata: p.biodata,
+          sourcePortal: p.sourcePortal,
+        })),
+        importMode
+      );
 
-    setSuccessReport(result);
-    setParsedStudents([]);
-    setRawText('');
+      setSuccessReport(result);
+      setParsedStudents([]);
+      setRawText('');
+    } catch (err: any) {
+      console.error('Import error:', err);
+    }
   };
 
   return (

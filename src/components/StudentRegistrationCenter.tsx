@@ -67,7 +67,7 @@ interface StudentRegistrationCenterProps {
       sourcePortal?: string;
     }>,
     mode: 'merge' | 'append'
-  ) => { imported: number; updated: number; total: number };
+  ) => Promise<{ imported: number; updated: number; total: number }> | { imported: number; updated: number; total: number };
   onSelectStudentForReport: (student: Student) => void;
   onOpenPassportModal?: () => void;
   onOpenClassCommentsModal?: () => void;
@@ -117,19 +117,14 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
   // Direct card upload handler state
   const cardFileInputRef = useRef<HTMLInputElement>(null);
   const [targetStudentForCardUpload, setTargetStudentForCardUpload] = useState<Student | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+  const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
 
   const handleCardUploadTrigger = (student: Student) => {
     const isAuthorized = currentUser.role === 'super_admin' || currentUser.role === 'admin' || (currentUser.role === 'form_teacher' && currentUser.isFormTeacherOf === student.className);
     if (!isAuthorized) {
-      alert('Access Restricted: Only Super Admin, Admin, or the Assigned Form Teacher can update student photographs.');
+      setNoticeMessage('Access Restricted: Only Super Admin, Admin, or the Assigned Form Teacher can update student photographs.');
       return;
-    }
-
-    if (student.passportPhoto) {
-      const confirmReplace = window.confirm(
-        `Identity Protection Alert:\nLearner "${student.name}" (${student.learnerId}) already has an official verified passport photo.\n\nAre you sure you want to replace it? Ensure the new photo belongs strictly to this student to avoid manipulating results.`
-      );
-      if (!confirmReplace) return;
     }
 
     setTargetStudentForCardUpload(student);
@@ -144,7 +139,7 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
     if (!file || !targetStudentForCardUpload) return;
     const validation = validateImageFile(file);
     if (!validation.valid) {
-      alert(validation.error || 'Invalid file format.');
+      setNoticeMessage(validation.error || 'Invalid file format.');
       return;
     }
     try {
@@ -152,7 +147,7 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
       onUpdateStudent(targetStudentForCardUpload.id, { passportPhoto: compressed });
     } catch (err) {
       console.error(err);
-      alert('Failed to process image file.');
+      setNoticeMessage('Failed to process image file.');
     } finally {
       setTargetStudentForCardUpload(null);
     }
@@ -450,13 +445,27 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
   };
 
   const handleDelete = (student: Student) => {
-    if (window.confirm(`Are you sure you want to remove ${student.name} (${student.learnerId}) from the student registry? This will remove all their grades and report sheets.`)) {
-      onDeleteStudent(student.id);
-    }
+    setStudentToDelete(student);
   };
 
   return (
     <div className="space-y-6">
+      {noticeMessage && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center justify-between text-amber-900 text-xs shadow-xs">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{noticeMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNoticeMessage(null)}
+            className="text-amber-800 font-bold hover:underline ml-3"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* 1. Header Banner & Actions */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="bg-gradient-to-r from-red-900 via-red-800 to-red-950 p-5 text-white border-b-2 border-amber-500 flex flex-wrap items-center justify-between gap-4">
@@ -533,15 +542,15 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
               </button>
             )}
 
-            {/* Upload Existing Students via Excel Button */}
+            {/* Upload Existing Students via CSV / Excel Button */}
             <button
               type="button"
               onClick={() => setIsExcelUploadModalOpen(true)}
               className="flex items-center space-x-1.5 px-4 py-2 bg-gradient-to-r from-emerald-800 via-teal-800 to-emerald-900 hover:from-emerald-700 hover:to-teal-700 text-emerald-100 hover:text-white text-xs font-bold rounded-xl shadow-md border border-emerald-400/80 transition transform hover:-translate-y-0.5"
-              title="Upload existing students in Excel sheet (.xlsx, .xls, .csv) with full room to edit class and biodata"
+              title="Upload existing students via CSV file or Excel spreadsheet (.csv, .xlsx, .xls) with full room to edit class and biodata"
             >
               <FileSpreadsheet className="w-4 h-4 text-amber-300" />
-              <span>Upload Students (Excel)</span>
+              <span>Upload Students (CSV / Excel)</span>
             </button>
 
             {/* Register New Student Button */}
@@ -970,9 +979,9 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
                     <FileSpreadsheet className="w-4 h-4 text-amber-300" />
                   </div>
                   <div>
-                    <span className="font-bold text-emerald-950 text-xs">Have existing students in an Excel sheet?</span>
+                    <span className="font-bold text-emerald-950 text-xs">Have existing students in a CSV or Excel sheet?</span>
                     <p className="text-[11px] text-emerald-800">
-                      Upload an Excel (.xlsx / .xls) or CSV sheet to batch-register learners with full room to edit class and biodata.
+                      Upload a CSV (.csv) or Excel (.xlsx / .xls) sheet to batch-register learners with full room to edit class and biodata.
                     </p>
                   </div>
                 </div>
@@ -985,7 +994,7 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
                   className="shrink-0 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs shadow-xs border border-emerald-500 flex items-center space-x-1"
                 >
                   <Upload className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Upload Excel Sheet</span>
+                  <span>Upload CSV / Excel Sheet</span>
                 </button>
               </div>
             )}
@@ -1625,6 +1634,44 @@ export const StudentRegistrationCenter: React.FC<StudentRegistrationCenterProps>
         students={students}
         onImportStudents={onImportExternalStudents}
       />
+
+      {/* 9. In-App Deletion Confirmation Modal */}
+      {studentToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-slate-200">
+            <div className="flex items-start space-x-3 text-red-600">
+              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-900">Remove Student Record</h3>
+                <p className="text-xs text-slate-600 mt-1">
+                  Are you sure you want to remove <strong>{studentToDelete.name}</strong> ({studentToDelete.learnerId}) from the student registry? This will remove all their grades and report sheets.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setStudentToDelete(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteStudent(studentToDelete.id);
+                  setStudentToDelete(null);
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs transition"
+              >
+                Yes, Remove Student
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

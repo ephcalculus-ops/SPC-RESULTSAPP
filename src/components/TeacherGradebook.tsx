@@ -2,9 +2,13 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Student, Teacher, SchoolSettings } from '../types';
 import { 
   SCHOOL_CLASSES, 
+  PRIMARY_CLASSES,
   calculateGrade, 
   computeTotal, 
   isJuniorClass, 
+  isPrimaryClass,
+  isSeniorClass,
+  getSchoolClasses,
   getSubjectsForClass, 
   getCAConfig,
   normalizeClass,
@@ -90,29 +94,32 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
 }) => {
   const isStaffAdmin = currentUser.role === 'super_admin' || currentUser.role === 'admin' || currentUser.role === 'exam_officer';
 
+  const schoolClasses = useMemo(() => getSchoolClasses(settings), [settings]);
+  const fallbackDefaultClass = schoolClasses[0] || (settings.section === 'primary' ? 'PRIMARY 1 A' : 'JSS 1 A');
+
   // Allowed classes: Super admins & exam officers can access all; teachers can access their assigned classes (or form class)
   const allowedClasses = useMemo(() => {
-    if (isStaffAdmin) return SCHOOL_CLASSES;
+    if (isStaffAdmin) return schoolClasses;
     const list = [...(currentUser.assignedClasses || [])];
     if (currentUser.isFormTeacherOf && !list.includes(currentUser.isFormTeacherOf)) {
       list.push(currentUser.isFormTeacherOf);
     }
-    // Expand any grade-level assignments (e.g. "JSS 3" -> "JSS 3 A", "JSS 3 B")
+    // Expand any grade-level assignments
     const expanded: string[] = [];
     for (const c of list) {
-      const matchingSchoolClasses = SCHOOL_CLASSES.filter(sc => isClassMatch(sc, c));
+      const matchingSchoolClasses = schoolClasses.filter(sc => isClassMatch(sc, c));
       if (matchingSchoolClasses.length > 0) {
         expanded.push(...matchingSchoolClasses);
       } else {
         expanded.push(normalizeClass(c));
       }
     }
-    return expanded.length > 0 ? Array.from(new Set(expanded)) : ['JSS 1 A'];
-  }, [isStaffAdmin, currentUser.assignedClasses, currentUser.isFormTeacherOf]);
+    return expanded.length > 0 ? Array.from(new Set(expanded)) : [fallbackDefaultClass];
+  }, [isStaffAdmin, currentUser.assignedClasses, currentUser.isFormTeacherOf, schoolClasses, fallbackDefaultClass]);
 
   // Pre-select teacher's assigned class and subject if possible
-  const defaultClass = allowedClasses[0] || 'JSS 1 A';
-  const defaultSubject = currentUser.assignedSubjects?.[0] || 'AGRICULTURAL SCIENCE';
+  const defaultClass = allowedClasses[0] || fallbackDefaultClass;
+  const defaultSubject = currentUser.assignedSubjects?.[0] || (settings.section === 'primary' ? 'ENGLISH STUDIES' : 'AGRICULTURAL SCIENCE');
 
   const [selectedClass, setSelectedClass] = useState<string>(defaultClass);
   const [selectedSubject, setSelectedSubject] = useState<string>(defaultSubject);
@@ -148,8 +155,9 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
   }, [currentUser, allowedClasses]);
 
   // Section config
-  const isJunior = isJuniorClass(selectedClass);
-  const classCurriculumSubjects = useMemo(() => getSubjectsForClass(selectedClass), [selectedClass]);
+  const isPrimary = isPrimaryClass(selectedClass) || settings.section === 'primary';
+  const isJunior = !isPrimary && isJuniorClass(selectedClass);
+  const classCurriculumSubjects = useMemo(() => getSubjectsForClass(selectedClass, settings), [selectedClass, settings]);
   const caConfig = useMemo(() => getCAConfig(selectedClass, settings), [selectedClass, settings]);
 
   // Allowed subjects: admin gets all; teacher gets their assigned subjects valid for this class
@@ -309,36 +317,36 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
 
   return (
     <div className="space-y-5">
-      {/* Teacher Score Upload Workspace Banner */}
-      <div className="bg-gradient-to-r from-[#7a0c0c] via-[#8f1212] to-[#690707] rounded-2xl shadow-lg border-2 border-amber-400 p-4 sm:p-5 text-white">
+      {/* Teacher Score Upload Workspace Banner (ROYAL BLUE) */}
+      <div className="bg-gradient-to-r from-[#1e3a8a] via-[#1d4ed8] to-[#1e40af] rounded-2xl shadow-xl border-2 border-blue-400 p-4 sm:p-5 text-white">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-red-950 uppercase tracking-wider">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-300 text-blue-950 uppercase tracking-wider shadow-xs">
                 Teacher Score Upload Center
               </span>
-              <span className="text-xs text-amber-200/90 font-mono">
+              <span className="text-xs text-blue-200 font-mono">
                 Staff ID: <strong className="text-white font-bold">{currentUser.staffId}</strong>
               </span>
-              <span className="text-xs text-amber-200/80">•</span>
-              <span className="text-xs text-amber-200 capitalize font-medium">
+              <span className="text-xs text-blue-200/80">•</span>
+              <span className="text-xs text-blue-200 capitalize font-medium">
                 {currentUser.role.replace('_', ' ')}
               </span>
             </div>
 
-            <h2 className="text-lg sm:text-xl font-black text-amber-300 font-serif">
+            <h2 className="text-lg sm:text-xl font-black text-white font-serif">
               {currentUser.name}
             </h2>
 
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-amber-100/90 pt-0.5">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-blue-100 pt-0.5">
               <span>Your Subjects:</span>
               {(currentUser.assignedSubjects || []).slice(0, 4).map(sub => (
-                <span key={sub} className="bg-red-950/80 border border-amber-400/40 px-2 py-0.5 rounded text-[11px] font-medium text-amber-200">
+                <span key={sub} className="bg-blue-950/80 border border-blue-400/40 px-2 py-0.5 rounded text-[11px] font-medium text-blue-100 shadow-2xs">
                   {sub}
                 </span>
               ))}
               {(currentUser.assignedSubjects || []).length > 4 && (
-                <span className="text-[11px] text-amber-300">+{(currentUser.assignedSubjects || []).length - 4} more</span>
+                <span className="text-[11px] text-blue-200">+{(currentUser.assignedSubjects || []).length - 4} more</span>
               )}
             </div>
           </div>
@@ -350,10 +358,10 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
               <button
                 type="button"
                 onClick={() => onOpenClassCommentsModal(selectedClass)}
-                className="flex items-center space-x-1.5 px-3 py-2.5 bg-red-950/90 hover:bg-red-900 text-amber-200 hover:text-white font-bold text-xs rounded-xl border border-amber-400/60 shadow-xs transition"
+                className="flex items-center space-x-1.5 px-3 py-2.5 bg-blue-950/90 hover:bg-blue-900 text-blue-100 hover:text-white font-bold text-xs rounded-xl border border-blue-400/60 shadow-xs transition"
                 title="Manage Form Teacher and Principal remarks for this class"
               >
-                <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
+                <MessageSquare className="w-3.5 h-3.5 text-blue-300" />
                 <span>Class Remarks</span>
               </button>
             )}
@@ -363,10 +371,10 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
               <button
                 type="button"
                 onClick={() => onOpenPassportModal(selectedClass)}
-                className="flex items-center space-x-1.5 px-3 py-2.5 bg-red-950/90 hover:bg-red-900 text-amber-200 hover:text-white font-bold text-xs rounded-xl border border-amber-400/60 shadow-xs transition"
+                className="flex items-center space-x-1.5 px-3 py-2.5 bg-blue-950/90 hover:bg-blue-900 text-blue-100 hover:text-white font-bold text-xs rounded-xl border border-blue-400/60 shadow-xs transition"
                 title="Upload or capture passport photos for students in this class"
               >
-                <Camera className="w-3.5 h-3.5 text-amber-400" />
+                <Camera className="w-3.5 h-3.5 text-blue-300" />
                 <span>Passports</span>
               </button>
             )}
@@ -379,7 +387,7 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
                 onClick={() => hasEditPermission && onOpenDirectScoreModal(selectedClass, selectedSubject)}
                 className={`flex items-center space-x-2 px-4 py-2.5 font-black text-xs rounded-xl shadow-md border-2 transition ${
                   hasEditPermission
-                    ? 'bg-gradient-to-r from-amber-400 to-amber-300 hover:from-amber-300 hover:to-amber-200 text-red-950 border-amber-200'
+                    ? 'bg-gradient-to-r from-amber-400 to-amber-300 hover:from-amber-300 hover:to-amber-200 text-slate-950 border-amber-200'
                     : 'bg-slate-800 text-slate-400 border-slate-700 opacity-60 cursor-not-allowed'
                 }`}
                 title={hasEditPermission ? "Open Direct Mark Entry Workspace to input CA and Exam scores directly" : "Scores Portal Restricted: Only assigned subject teacher can input marks"}
@@ -396,12 +404,12 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
                 onClick={() => onOpenMissingMarksModal(selectedClass, selectedSubject)}
                 className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl font-bold text-xs shadow-md transition border ${
                   missingCountInCurrentView > 0
-                    ? 'bg-amber-400 hover:bg-amber-300 text-red-950 border-amber-300 shadow-amber-900/20'
-                    : 'bg-red-950/80 hover:bg-red-900 text-amber-200 border-amber-400/60'
+                    ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 border-amber-300 shadow-amber-900/20'
+                    : 'bg-blue-950/80 hover:bg-blue-900 text-blue-100 border border-blue-400/60'
                 }`}
                 title="Detect missing continuous assessment or exam marks and resolve inline"
               >
-                <ShieldAlert className="w-4 h-4 text-red-950" />
+                <ShieldAlert className="w-4 h-4 text-blue-300" />
                 <span>
                   {missingCountInCurrentView > 0 
                     ? `Detect Missing Marks (${missingCountInCurrentView} Missing)`
@@ -417,7 +425,7 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
               onClick={() => hasEditPermission && setIsUploadModalOpen(true)}
               className={`flex items-center space-x-2 px-4 py-2.5 font-bold text-xs rounded-xl shadow-md border transition ${
                 hasEditPermission
-                  ? 'bg-amber-400 hover:bg-amber-300 text-red-950 border-amber-300'
+                  ? 'bg-blue-700 hover:bg-blue-600 text-white border-blue-400'
                   : 'bg-slate-800 text-slate-400 border-slate-700 opacity-60 cursor-not-allowed'
               }`}
               title={hasEditPermission ? "Upload Continuous Assessments & Exam Marks via CSV/Excel" : "Scores Portal Restricted: Only assigned subject teacher can upload marks"}
@@ -430,10 +438,10 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
             <button
               type="button"
               onClick={onOpenSyncModal}
-              className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-800 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md border border-emerald-400/80 transition"
+              className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-md border border-emerald-400/80 transition"
               title="Easily synchronize student continuous assessment and exam marks with Google Sheets"
             >
-              <FileSpreadsheet className="w-4 h-4 text-amber-300" />
+              <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
               <span>Sync to Google Sheets</span>
             </button>
 
@@ -442,10 +450,10 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
               <button
                 type="button"
                 onClick={onOpenPercentageModal}
-                className="flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-red-950 to-slate-900 hover:from-red-900 hover:to-slate-800 text-amber-300 font-bold text-xs rounded-xl shadow-md border border-amber-400/80 transition"
+                className="flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-blue-950 to-indigo-950 hover:from-blue-900 hover:to-indigo-900 text-blue-200 font-bold text-xs rounded-xl shadow-md border border-blue-400/80 transition"
                 title="Admin: Adjust Continuous Assessment (CA 1–4) and Examination percentages"
               >
-                <Sliders className="w-4 h-4 text-amber-400" />
+                <Sliders className="w-4 h-4 text-blue-300" />
                 <span>Adjust CA & Exams</span>
               </button>
             )}
@@ -456,7 +464,7 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenTeacherSignupModal('login')}
-                  className="flex items-center space-x-1 px-3 py-2.5 bg-emerald-800 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl border border-emerald-500 shadow-xs transition"
+                  className="flex items-center space-x-1 px-3 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl border border-emerald-500 shadow-xs transition"
                   title="Staff Sign In"
                 >
                   <LogIn className="w-3.5 h-3.5" />
@@ -465,7 +473,7 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenTeacherSignupModal('signup')}
-                  className="flex items-center space-x-1 px-3 py-2.5 bg-amber-400 hover:bg-amber-300 text-red-950 font-bold text-xs rounded-xl border border-amber-300 shadow-xs transition"
+                  className="flex items-center space-x-1 px-3 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl border border-blue-400 shadow-xs transition"
                   title="Register as a new teacher"
                 >
                   <UserPlus className="w-3.5 h-3.5" />
@@ -477,22 +485,50 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
         </div>
 
         {/* Progress Bar for Current Subject / Class */}
-        <div className="mt-4 pt-3 border-t border-red-900/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+        <div className="mt-4 pt-3 border-t border-blue-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
           <div className="flex items-center space-x-2">
-            <span className="text-amber-200/90 font-medium">Mark Recording Progress ({selectedClass} • {selectedSubject}):</span>
-            <span className="font-bold text-white bg-red-950/90 px-2 py-0.5 rounded border border-amber-400/40">
+            <span className="text-blue-200 font-medium">Mark Recording Progress ({selectedClass} • {selectedSubject}):</span>
+            <span className="font-bold text-white bg-blue-950/90 px-2 py-0.5 rounded border border-blue-400/40">
               {scoredCount} of {classStudents.length} Students Scored ({scoreCompletionPercent}%)
             </span>
           </div>
 
-          <div className="w-full sm:w-48 bg-red-950/90 rounded-full h-2.5 border border-amber-400/40 overflow-hidden">
+          <div className="w-full sm:w-48 bg-blue-950/90 rounded-full h-2.5 border border-blue-400/40 overflow-hidden">
             <div 
-              className="bg-gradient-to-r from-amber-400 to-amber-300 h-2.5 rounded-full transition-all duration-300"
+              className="bg-gradient-to-r from-blue-300 to-cyan-300 h-2.5 rounded-full transition-all duration-300"
               style={{ width: `${scoreCompletionPercent}%` }}
             />
           </div>
         </div>
       </div>
+
+      {/* MOBILE-FIRST DIRECT MARK ENTERING QUICK LAUNCHER (Royal Blue) */}
+      {onOpenDirectScoreModal && hasEditPermission && (
+        <div className="md:hidden bg-gradient-to-r from-blue-700 via-blue-600 to-indigo-700 p-3.5 rounded-2xl shadow-lg border-2 border-blue-400 flex items-center justify-between gap-3 text-white">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-blue-950 text-blue-200 flex items-center justify-center shrink-0 shadow-md">
+              <Smartphone className="w-5 h-5 text-blue-300" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-black uppercase tracking-wider text-white flex items-center space-x-1.5">
+                <span>Direct Mark Entry</span>
+                <span className="px-1.5 py-0.2 rounded bg-blue-950 text-blue-200 text-[9px] font-mono font-bold">Touch Friendly</span>
+              </div>
+              <p className="text-[11px] text-blue-100 font-semibold truncate">
+                Enter CA 1–4 & Exam marks on phone/tablet
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onOpenDirectScoreModal(selectedClass, selectedSubject)}
+            className="px-3.5 py-2 bg-white hover:bg-blue-50 text-blue-900 font-black text-xs rounded-xl shadow-md shrink-0 flex items-center space-x-1 border border-blue-200"
+          >
+            <span>Enter Marks</span>
+            <BookOpen className="w-3.5 h-3.5 text-blue-700 ml-1" />
+          </button>
+        </div>
+      )}
 
       {/* Control Bar & Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5">
@@ -501,11 +537,13 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
             {/* Format Badge */}
             <div className="self-end lg:self-center pb-1 lg:pb-0">
               <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-black border shadow-sm ${
-                isJunior 
+                isPrimary
+                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                  : isJunior 
                   ? 'bg-amber-100 text-amber-900 border-amber-300' 
                   : 'bg-blue-100 text-blue-900 border-blue-300'
               }`}>
-                {isJunior ? 'JUNIOR FORMAT' : 'SENIOR FORMAT'}
+                {isPrimary ? 'PRIMARY FORMAT' : isJunior ? 'JUNIOR FORMAT' : 'SENIOR FORMAT'}
               </span>
             </div>
 
@@ -521,7 +559,7 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
               >
                 {allowedClasses.map(cls => (
                   <option key={cls} value={cls}>
-                    {cls} {isJuniorClass(cls) ? '(Junior)' : '(Senior)'}
+                    {cls} {isPrimaryClass(cls) ? '(Primary)' : isJuniorClass(cls) ? '(Junior)' : '(Senior)'}
                   </option>
                 ))}
               </select>
@@ -565,7 +603,7 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
                     }}
                     className={`px-2.5 py-1.5 rounded-md text-xs font-bold transition ${
                       gradebookTerm === id
-                        ? 'bg-[#8b1515] text-white shadow-sm'
+                        ? 'bg-blue-700 text-white shadow-sm'
                         : 'text-slate-700 hover:text-slate-900 hover:bg-slate-200'
                     }`}
                   >
@@ -611,10 +649,10 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
             {/* Teacher Self-Service Score Upload Button */}
             <button
               onClick={() => setIsUploadModalOpen(true)}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-gradient-to-r from-red-800 to-red-900 hover:from-red-700 hover:to-red-800 text-white text-xs font-bold rounded-lg shadow-sm border border-amber-400 transition"
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-gradient-to-r from-blue-700 to-blue-800 hover:from-blue-600 hover:to-blue-700 text-white text-xs font-bold rounded-lg shadow-sm border border-blue-400 transition"
               title="Every teacher can upload student scores via CSV or Excel"
             >
-              <FileSpreadsheet className="w-4 h-4 text-amber-300" />
+              <FileSpreadsheet className="w-4 h-4 text-blue-200" />
               <span>Upload CSV</span>
             </button>
 
@@ -699,9 +737,9 @@ export const TeacherGradebook: React.FC<TeacherGradebookProps> = ({
                 setSelectedClass(allowedClasses[0]);
                 setSelectedSubject(allowedSubjects[0]);
               }}
-              className="inline-flex items-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-red-900 to-red-800 hover:from-red-800 hover:to-red-700 text-amber-300 font-bold text-xs rounded-xl shadow-md border border-amber-400 transition"
+              className="inline-flex items-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-blue-700 to-blue-800 hover:from-blue-600 hover:to-blue-700 text-white font-bold text-xs rounded-xl shadow-md border border-blue-400 transition"
             >
-              <CheckCircle2 className="w-4 h-4 text-amber-300" />
+              <CheckCircle2 className="w-4 h-4 text-white" />
               <span>Switch to My Assigned Portal ({allowedClasses[0]} • {allowedSubjects[0]})</span>
             </button>
           )}

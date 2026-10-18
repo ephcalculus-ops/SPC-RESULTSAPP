@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Student, StudentBiodata, Teacher, SchoolSettings } from '../types';
-import { SCHOOL_CLASSES, normalizeClass, isJuniorClass } from '../data/mockData';
+import { SCHOOL_CLASSES, normalizeClass, isJuniorClass, getSchoolClasses } from '../data/mockData';
 import {
   Upload,
   FileSpreadsheet,
@@ -55,7 +55,7 @@ interface StudentExcelUploadModalProps {
       sourcePortal?: string;
     }>,
     mode: 'merge' | 'append'
-  ) => { imported: number; updated: number; total: number };
+  ) => Promise<{ imported: number; updated: number; total: number }> | { imported: number; updated: number; total: number };
 }
 
 export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = ({
@@ -112,6 +112,59 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
     return `SPC/${year}/${rand}`;
   };
 
+  // Helper to parse CSV text directly when XLSX is not used or fails
+  const parseCsvTextToObjects = (text: string): any[] => {
+    const cleanText = text.replace(/^\uFEFF/, '').trim();
+    if (!cleanText) return [];
+    const rawLines = cleanText.split(/\r?\n/).filter(line => line.trim().length > 0);
+    if (rawLines.length < 2) return [];
+
+    const firstLine = rawLines[0];
+    let delimiter = ',';
+    const commaCount = (firstLine.match(/,/g) || []).length;
+    const semiCount = (firstLine.match(/;/g) || []).length;
+    const tabCount = (firstLine.match(/\t/g) || []).length;
+    if (semiCount > commaCount && semiCount > tabCount) delimiter = ';';
+    else if (tabCount > commaCount && tabCount > semiCount) delimiter = '\t';
+
+    const parseLine = (line: string): string[] => {
+      const entries: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === delimiter && !inQuotes) {
+          entries.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      entries.push(current.trim());
+      return entries.map(s => s.replace(/^["']|["']$/g, '').trim());
+    };
+
+    const headers = parseLine(rawLines[0]);
+    const rows: any[] = [];
+    for (let i = 1; i < rawLines.length; i++) {
+      const values = parseLine(rawLines[i]);
+      if (values.length === 0 || values.every(v => !v)) continue;
+      const obj: Record<string, string> = {};
+      headers.forEach((h, idx) => {
+        if (h) obj[h] = values[idx] || '';
+      });
+      rows.push(obj);
+    }
+    return rows;
+  };
+
   // Process uploaded Excel / CSV file
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFile = e.target.files?.[0];
@@ -124,48 +177,74 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
     setIsProcessing(true);
 
     try {
-      const data = await uploadedFile.arrayBuffer();
-      const workbook = XLSX.read(data, { type: 'array' });
-      
-      // Select the first sheet
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
-        throw new Error('The uploaded Excel spreadsheet contains no worksheets.');
+      let rawRows: any[] = [];
+      const isCsv = uploadedFile.name.toLowerCase().endsWith('.csv') || uploadedFile.type.includes('csv');
+
+      // Attempt parsing via XLSX first
+      try {
+        const data = await uploadedFile.arrayBuffer();
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        if (firstSheetName) {
+          const worksheet = workbook.Sheets[firstSheetName];
+          rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+        }
+      } catch (xlsxErr) {
+        console.warn('XLSX parsing notice:', xlsxErr);
       }
-      const worksheet = workbook.Sheets[firstSheetName];
-      const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+      // If rawRows is empty or file is a CSV, fallback to direct text CSV parser
+      if ((!rawRows || rawRows.length === 0) && (isCsv || uploadedFile.name.toLowerCase().endsWith('.txt'))) {
+        const text = await uploadedFile.text();
+        rawRows = parseCsvTextToObjects(text);
+      }
 
       if (!rawRows || rawRows.length === 0) {
-        throw new Error('No data found in worksheet. Please ensure the file has student rows below the header.');
+        throw new Error('No student data rows found in the CSV/Excel sheet. Please ensure rows exist below the header row.');
       }
 
       // Map rows to EditableExcelStudent
       const parsed: EditableExcelStudent[] = rawRows.map((row, idx) => {
-        // Find keys case-insensitively
+        // Find keys prioritizing exact matches, preventing guardian columns from matching student fields
         const getVal = (possibleKeys: string[]): string => {
-          for (const key of Object.keys(row)) {
-            const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-            for (const target of possibleKeys) {
-              const cleanTarget = target.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-              if (cleanKey === cleanTarget || cleanKey.includes(cleanTarget)) {
-                return String(row[key]).trim();
+          // Pass 1: exact matches
+          for (const target of possibleKeys) {
+            const cleanTarget = target.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+            for (const key of Object.keys(row)) {
+              const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (cleanKey === cleanTarget) {
+                return String(row[key] ?? '').trim();
+              }
+            }
+          }
+          // Pass 2: substring matches, guarding against guardian/parent/emergency confusion
+          for (const target of possibleKeys) {
+            const cleanTarget = target.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (cleanTarget.length < 3) continue;
+            for (const key of Object.keys(row)) {
+              const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+              const isGuardianField = cleanKey.includes('guardian') || cleanKey.includes('parent') || cleanKey.includes('father') || cleanKey.includes('mother') || cleanKey.includes('sponsor');
+              const targetIsGuardian = cleanTarget.includes('guardian') || cleanTarget.includes('parent') || cleanTarget.includes('father') || cleanTarget.includes('mother') || cleanTarget.includes('sponsor');
+              if (isGuardianField && !targetIsGuardian) continue;
+              if (cleanKey.includes(cleanTarget)) {
+                return String(row[key] ?? '').trim();
               }
             }
           }
           return '';
         };
 
-        const rawName = getVal(['fullname', 'studentname', 'learnername', 'name', 'surname']) ||
+        const rawName = getVal(['fullname', 'studentname', 'learnername', 'pupilname', 'name', 'surname']) ||
           `${getVal(['surname', 'lastname'])} ${getVal(['firstname'])} ${getVal(['othername', 'middlename'])}`.trim() ||
           `Learner ${idx + 1}`;
 
-        const rawClass = getVal(['class', 'classname', 'level', 'arm', 'grade']) || 'JSS 1 A';
+        const rawClass = getVal(['class', 'classname', 'currentclass', 'level', 'arm', 'grade']) || 'JSS 1 A';
         const normalizedClassName = normalizeClass(rawClass);
 
-        const rawGender = getVal(['gender', 'sex']).toUpperCase();
-        const gender: 'MALE' | 'FEMALE' = rawGender.startsWith('F') ? 'FEMALE' : 'MALE';
+        const rawGender = getVal(['gender', 'sex', 'gendersex']).toUpperCase();
+        const gender: 'MALE' | 'FEMALE' = (rawGender.startsWith('F') || rawGender === 'GIRL' || rawGender === 'FEMALE') ? 'FEMALE' : 'MALE';
 
-        const rawLearnerId = getVal(['learnerid', 'admissionno', 'admissionnumber', 'regno', 'regnumber', 'id', 'studentno', 'matricno']) ||
+        const rawLearnerId = getVal(['learnerid', 'admissionno', 'admissionnumber', 'regno', 'regnumber', 'studentno', 'id', 'matricno', 'studentid']) ||
           generateAutoId(idx);
 
         const dob = getVal(['dateofbirth', 'dob', 'birthdate', 'birth']) || '2011-06-15';
@@ -222,7 +301,7 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
       setSelectedStudentIndices(new Set(parsed.map((_, i) => i)));
     } catch (err: any) {
       console.error(err);
-      setErrorBanner(err.message || 'Failed to parse Excel file. Please verify the file format.');
+      setErrorBanner(err.message || 'Failed to parse CSV/Excel file. Please verify the file format.');
       setParsedStudents([]);
     } finally {
       setIsProcessing(false);
@@ -311,7 +390,7 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
   // Bulk Apply Class to selected students
   const handleBulkApplyClass = () => {
     if (selectedStudentIndices.size === 0) {
-      alert('Please select at least one student using the checkboxes.');
+      setErrorBanner('Please select at least one student using the checkboxes.');
       return;
     }
     setParsedStudents(prev => {
@@ -362,21 +441,12 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
   };
 
   // Save / Commit registrations
-  const handleCommitRegistrations = () => {
+  const handleCommitRegistrations = async () => {
     const toImport = parsedStudents.filter((_, idx) => selectedStudentIndices.has(idx));
 
     if (toImport.length === 0) {
       setErrorBanner('Please select at least one student to register.');
       return;
-    }
-
-    // Check for validation errors
-    const hasErrors = toImport.some(s => s.validationErrors.length > 0);
-    if (hasErrors) {
-      const confirmWithErrors = window.confirm(
-        'Some selected student rows have missing names or class information. Would you like to proceed with valid records?'
-      );
-      if (!confirmWithErrors) return;
     }
 
     const validToImport = toImport.filter(s => s.name.trim() && s.className);
@@ -386,19 +456,29 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
       return;
     }
 
-    const payload = validToImport.map(s => ({
+    const payload = validToImport.map((s, idx) => ({
       name: s.name.trim().toUpperCase(),
       className: s.className,
       gender: s.gender,
-      learnerId: s.learnerId.trim(),
+      learnerId: s.learnerId.trim() || generateAutoId(idx),
       passportPhoto: s.passportPhoto,
       biodata: s.biodata,
       sourcePortal: sourceTag,
     }));
 
-    const result = onImportStudents(payload, importMode);
-    setSuccessReport(result);
+    setIsProcessing(true);
     setErrorBanner(null);
+
+    try {
+      const result = await onImportStudents(payload, importMode);
+      setSuccessReport(result);
+      setErrorBanner(null);
+    } catch (err: any) {
+      console.error(err);
+      setErrorBanner(err?.message || 'Failed to register students into the registry.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Download Sample Excel Template
@@ -574,12 +654,15 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
               <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
               <div>
                 <h4 className="font-bold text-sm text-emerald-950">
-                  Student Registrations Successfully Completed!
+                  Student Registrations Successfully Saved & Persisted!
                 </h4>
                 <p className="text-xs text-emerald-800 mt-0.5">
                   Successfully processed <strong>{successReport.total}</strong> student records: 
                   {' '}<span className="bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded font-bold">{successReport.imported} Newly Enrolled</span>
                   {' '}and <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-bold">{successReport.updated} Biodata Merged / Updated</span>.
+                </p>
+                <p className="text-[11px] text-emerald-700 font-medium mt-1">
+                  All records have been saved to Local Storage and synchronized with Cloud Firestore. The students will remain in the registry permanently.
                 </p>
               </div>
             </div>
@@ -627,7 +710,7 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
                 className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-600 hover:to-teal-700 text-white font-bold rounded-xl shadow-md border border-emerald-400 transition"
               >
                 <Upload className="w-4 h-4 text-amber-300" />
-                <span>{file ? 'Upload Different Sheet' : 'Choose Excel / Spreadsheet File'}</span>
+                <span>{file ? 'Upload Different File (CSV / Excel)' : 'Choose CSV or Excel Spreadsheet'}</span>
               </button>
 
               {fileName && (
@@ -750,7 +833,7 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
                     onChange={e => setBulkClassTarget(e.target.value)}
                     className="bg-slate-50 border border-slate-300 text-slate-900 font-bold text-xs rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-emerald-600"
                   >
-                    {SCHOOL_CLASSES.map(cls => (
+                    {getSchoolClasses(settings).map(cls => (
                       <option key={cls} value={cls}>
                         {cls} {isJuniorClass(cls) ? '(Junior)' : '(Senior)'}
                       </option>
@@ -783,7 +866,7 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
                     className="bg-slate-50 border border-slate-300 text-slate-900 font-semibold text-xs rounded-lg px-2.5 py-1.5"
                   >
                     <option value="ALL">Show All Classes ({parsedStudents.length})</option>
-                    {SCHOOL_CLASSES.map(cls => (
+                    {getSchoolClasses(settings).map(cls => (
                       <option key={cls} value={cls}>
                         {cls}
                       </option>
@@ -879,7 +962,7 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
                               onChange={e => handleUpdateField(originalIndex, 'className', e.target.value)}
                               className="w-full text-xs font-bold text-red-950 px-2 py-1 bg-red-50/50 border border-red-200 rounded focus:ring-2 focus:ring-red-600"
                             >
-                              {SCHOOL_CLASSES.map(cls => (
+                              {getSchoolClasses(settings).map(cls => (
                                 <option key={cls} value={cls}>
                                   {cls}
                                 </option>
@@ -1048,11 +1131,9 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm('Clear all uploaded records and start over?')) {
-                    setParsedStudents([]);
-                    setFile(null);
-                    setFileName('');
-                  }
+                  setParsedStudents([]);
+                  setFile(null);
+                  setFileName('');
                 }}
                 className="px-3 py-1.5 text-xs text-red-600 hover:text-red-800 font-semibold"
               >
@@ -1062,17 +1143,19 @@ export const StudentExcelUploadModal: React.FC<StudentExcelUploadModalProps> = (
 
             <button
               type="button"
-              disabled={parsedStudents.length === 0 || selectedStudentIndices.size === 0}
+              disabled={isProcessing || parsedStudents.length === 0 || selectedStudentIndices.size === 0}
               onClick={handleCommitRegistrations}
               className={`flex items-center space-x-2 px-6 py-2.5 rounded-xl font-bold text-xs shadow-md border transition ${
-                parsedStudents.length > 0 && selectedStudentIndices.size > 0
+                !isProcessing && parsedStudents.length > 0 && selectedStudentIndices.size > 0
                   ? 'bg-gradient-to-r from-emerald-700 via-teal-800 to-emerald-900 hover:from-emerald-600 hover:to-teal-700 text-white border-amber-400'
                   : 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed'
               }`}
             >
-              <CheckCircle2 className="w-4 h-4 text-amber-300" />
+              <CheckCircle2 className={`w-4 h-4 text-amber-300 ${isProcessing ? 'animate-spin' : ''}`} />
               <span>
-                Register Selected Students ({selectedStudentIndices.size})
+                {isProcessing
+                  ? 'Saving to Local & Cloud Firestore...'
+                  : `Register Selected Students (${selectedStudentIndices.size})`}
               </span>
             </button>
           </div>

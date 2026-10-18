@@ -9,7 +9,7 @@ export interface GradeScaleItem {
   colorClass?: string;
 }
 
-export type SchoolSection = 'JUNIOR' | 'SENIOR';
+export type SchoolSection = 'PRIMARY' | 'JUNIOR' | 'SENIOR';
 
 export type AcademicTerm = 'First Term' | 'Second Term' | 'Third Term';
 
@@ -41,14 +41,17 @@ export interface Teacher {
   password?: string;
   qualification?: string;
   registeredAt?: string;
-  // Enhanced Teacher Biodata fields
-  gender?: 'MALE' | 'FEMALE';
+  // Enhanced Teacher Biodata & School Register fields
+  gender?: 'MALE' | 'FEMALE' | 'NA';
   dateOfBirth?: string;
   stateOfOrigin?: string;
   address?: string;
   emergencyContact?: string;
   avatar?: string;
   bio?: string;
+  mainClass?: string;
+  classArm?: string;
+  dor?: string;
 }
 
 export interface SubjectScore {
@@ -186,11 +189,17 @@ export interface SchoolProfile {
   staffIdPrefix?: string;   // e.g. "STP/TCH/" or "GHA/TCH/"
   primaryColor?: string;
   accentColor?: string;
+  section?: 'secondary' | 'primary' | 'all';
+  shortName?: string;
+  tagline?: string;
 }
 
 export interface SchoolSettings {
   schoolId?: string;
   schoolName: string;
+  shortName?: string;
+  tagline?: string;
+  section?: 'secondary' | 'primary' | 'all';
   schoolMotto?: string;
   schoolAddress: string;
   schoolEmail: string;

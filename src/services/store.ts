@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Student, StudentBiodata, Teacher, SchoolSettings, GoogleSheetsSyncConfig, SubjectScore, AffectiveAssessment, PsychomotorAssessment, UserRole, CAWeightConfig, GradeScaleItem, SchoolProfile, SchoolThemeId, SchoolSection } from '../types';
 import { 
   INITIAL_SCHOOL_SETTINGS, 
+  INITIAL_PRIMARY_SCHOOL_SETTINGS,
   INITIAL_TEACHERS, 
+  INITIAL_PRIMARY_TEACHERS,
+  INITIAL_PRIMARY_STUDENTS,
   generate200Students, 
   calculateAllRankings, 
   calculateGrade, 
@@ -12,15 +15,23 @@ import {
   getNextClass,
   DEFAULT_OFFICIAL_STAMP,
   isJuniorClass,
+  isSeniorClass,
+  isPrimaryClass,
+  getSchoolClasses,
+  getSubjectsForClass,
   getCAConfig,
   DEFAULT_SENIOR_CA_CONFIG,
   DEFAULT_JUNIOR_CA_CONFIG,
+  DEFAULT_PRIMARY_CA_CONFIG,
   DEFAULT_GRADING_SCALE,
   SCHOOL_CLASSES,
+  PRIMARY_CLASSES,
+  PRIMARY_SUBJECTS,
   ALL_SUBJECTS,
   JUNIOR_SUBJECTS,
   SENIOR_SUBJECTS,
   isDemoTeacher,
+  WRONG_STAFF_NAMES,
   isDemoStudent,
   normalizeClass,
   isClassMatch,
@@ -34,8 +45,10 @@ import { GoogleSheetsService } from './googleSheetsService';
 import { 
   testFirestoreConnection, 
   queueScoreCloudSync, 
+  flushPendingScoresToCloud,
   saveSystemSnapshotToCloud, 
   syncFullStudentsDatasetToCloud,
+  saveSingleStudentToCloud,
   subscribeToCloudSync,
   getCloudSyncStatus,
   synchronizeCloudAndLocalStorage,
@@ -43,7 +56,13 @@ import {
   setActiveSchoolId,
   saveSchoolProfileToCloud,
   syncSettingsToCloud,
-  syncTeachersToCloud
+  syncTeachersToCloud,
+  saveTeacherToCloud,
+  debounceSaveTeacherToCloud,
+  deleteTeacherFromCloud,
+  deleteStudentFromCloud,
+  fetchTeachersFromCloud,
+  synchronizeTeachersCloudAndLocal
 } from './firestoreSync';
 
 export interface AuditLogEntry {
@@ -107,15 +126,24 @@ export const getSchoolStorageKey = (baseKey: string, schoolId: string = 'stpaul'
   return `school_${schoolId}_${baseKey}`;
 };
 
+export const getInitialActiveSchoolId = (): string => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_SCHOOL);
+    if (saved) return saved;
+  } catch (_) {}
+  return 'stpaul';
+};
+
 export function useSchoolStore() {
+  const initialActiveSchoolId = useMemo(() => getInitialActiveSchoolId(), []);
+
   // 0. Active School Identification & Multi-School Registry
-  const [activeSchoolId, setActiveSchoolIdState] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_SCHOOL);
-      if (saved) return saved;
-    } catch (_) {}
-    return 'stpaul';
-  });
+  const [activeSchoolId, setActiveSchoolIdState] = useState<string>(initialActiveSchoolId);
+  const activeSchoolRef = useRef<string>(initialActiveSchoolId);
+
+  useEffect(() => {
+    activeSchoolRef.current = activeSchoolId;
+  }, [activeSchoolId]);
 
   const [schoolRegistry, setSchoolRegistry] = useState<SchoolProfile[]>(() => {
     try {
@@ -139,27 +167,86 @@ export function useSchoolStore() {
   const activeSchoolProfile = useMemo(() => {
     return schoolRegistry.find(s => s.id === activeSchoolId) || schoolRegistry[0] || DEFAULT_SCHOOL_REGISTRY[0];
   }, [schoolRegistry, activeSchoolId]);
-  // 1. Current logged-in teacher / user
-  const [currentUser, setCurrentUser] = useState<Teacher>(() => {
-    const defaultSuperAdmin = INITIAL_TEACHERS[0];
+
+  // 1. School Settings - 100% Isolated per School
+  const [settings, setSettings] = useState<SchoolSettings>(() => {
+    const targetSchool = getInitialActiveSchoolId();
+    const fallbackSettings = targetSchool === 'stpauls-primary' 
+      ? INITIAL_PRIMARY_SCHOOL_SETTINGS 
+      : INITIAL_SCHOOL_SETTINGS;
     try {
-      const savedTeacherId = localStorage.getItem('stpaul_auth_teacher_id');
+      const saved = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_SETTINGS, targetSchool));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        let seniorCA = parsed.seniorCAConfig;
+        if (targetSchool === 'stpaul') {
+          if (!seniorCA || seniorCA.ca1Max !== 10 || seniorCA.ca2Max !== 10 || seniorCA.ca3Max !== 10 || seniorCA.ca4Max !== 0 || seniorCA.examMax !== 70) {
+            seniorCA = DEFAULT_SENIOR_CA_CONFIG;
+          }
+        }
+        return {
+          ...fallbackSettings,
+          ...parsed,
+          schoolLogo: parsed.schoolLogo || fallbackSettings.schoolLogo,
+          allowAllTeachersScoreEntry: parsed.allowAllTeachersScoreEntry !== undefined ? parsed.allowAllTeachersScoreEntry : true,
+          juniorCAConfig: parsed.juniorCAConfig || fallbackSettings.juniorCAConfig,
+          seniorCAConfig: seniorCA || fallbackSettings.seniorCAConfig,
+        };
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return fallbackSettings;
+  });
+
+  // 2. Teachers roster - 100% Isolated per School
+  const [teachers, setTeachers] = useState<Teacher[]>(() => {
+    const targetSchool = getInitialActiveSchoolId();
+    const fallbackTeachers = targetSchool === 'stpauls-primary' 
+      ? INITIAL_PRIMARY_TEACHERS 
+      : INITIAL_TEACHERS;
+    try {
+      const saved = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, targetSchool));
+      if (saved) {
+        const parsed: Teacher[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Permanently purge any fictional/wrong staff names
+          const cleaned = parsed.filter(t => t && !isDemoTeacher(t) && !WRONG_STAFF_NAMES.has(t.name?.trim() || ''));
+          // Check if official SPC/STAFF roster is loaded for St. Paul College
+          const hasOfficialStaff = cleaned.some(t => t.staffId?.startsWith('SPC/STAFF/'));
+          if (targetSchool !== 'stpauls-primary' && !hasOfficialStaff) {
+            // Freshly populate with official 23 teachers from register
+            localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, targetSchool), JSON.stringify(fallbackTeachers));
+            syncTeachersToCloud(fallbackTeachers, targetSchool);
+            return fallbackTeachers;
+          }
+          // Ensure Super Admin account is retained
+          const hasAdmin = cleaned.some(t => t.id === 't-admin' || t.role === 'super_admin' || t.staffId === 'STP/ADMIN/001' || t.id === 't-primary-admin');
+          const finalTeachers = hasAdmin ? cleaned : [fallbackTeachers[0], ...cleaned];
+          // Write clean list back to localStorage to erase wrong names forever
+          localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, targetSchool), JSON.stringify(finalTeachers));
+          return finalTeachers;
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return fallbackTeachers;
+  });
+
+  // 3. Current logged-in teacher / user for active school
+  const [currentUser, setCurrentUser] = useState<Teacher>(() => {
+    const targetSchool = getInitialActiveSchoolId();
+    const fallbackUser = targetSchool === 'stpauls-primary' ? INITIAL_PRIMARY_TEACHERS[0] : INITIAL_TEACHERS[0];
+    try {
+      const schoolAuthKey = `stpaul_auth_teacher_id_${targetSchool}`;
+      const savedTeacherId = localStorage.getItem(schoolAuthKey) || (targetSchool === 'stpaul' ? localStorage.getItem('stpaul_auth_teacher_id') : null);
       if (savedTeacherId) {
-        const savedTeachers = localStorage.getItem(STORAGE_KEY_TEACHERS);
+        const savedTeachers = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, targetSchool));
         if (savedTeachers) {
           const list: Teacher[] = JSON.parse(savedTeachers);
           const found = list.find(t => t.id === savedTeacherId);
           if (found && !isDemoTeacher(found)) {
-            if (found.id === 't-admin' || found.staffId === 'STP/ADMIN/001' || found.name.includes('Peter Sule') || found.name.trim().toUpperCase() === 'SUPER ADMIN') {
-              return {
-                ...found,
-                name: 'SUPER ADMIN',
-                role: 'super_admin',
-                password: SUPER_ADMIN_PORTAL_PASSWORD,
-                assignedClasses: [...SCHOOL_CLASSES],
-                assignedSubjects: [...ALL_SUBJECTS],
-              };
-            }
             return found;
           }
         }
@@ -167,90 +254,39 @@ export function useSchoolStore() {
     } catch (e) {
       console.error(e);
     }
-    return defaultSuperAdmin;
-  });
-  
-  // 2. School Settings
-  const [settings, setSettings] = useState<SchoolSettings>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_SETTINGS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        let seniorCA = parsed.seniorCAConfig;
-        // Enforce official SSS 1-3 standard: CA1 (10), CA2 (10), CA3 (10), CA4 (0), Exam (70), Total (100)
-        if (!seniorCA || seniorCA.ca1Max !== 10 || seniorCA.ca2Max !== 10 || seniorCA.ca3Max !== 10 || seniorCA.ca4Max !== 0 || seniorCA.examMax !== 70) {
-          seniorCA = DEFAULT_SENIOR_CA_CONFIG;
-        }
-        return {
-          ...INITIAL_SCHOOL_SETTINGS,
-          ...parsed,
-          schoolLogo: parsed.schoolLogo || INITIAL_SCHOOL_SETTINGS.schoolLogo,
-          allowAllTeachersScoreEntry: parsed.allowAllTeachersScoreEntry !== undefined ? parsed.allowAllTeachersScoreEntry : true,
-          juniorCAConfig: parsed.juniorCAConfig || INITIAL_SCHOOL_SETTINGS.juniorCAConfig,
-          seniorCAConfig: seniorCA,
-        };
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return INITIAL_SCHOOL_SETTINGS;
+    return fallbackUser;
   });
 
-  // 3. Teachers roster (clean real teachers + Super Admin)
-  const [teachers, setTeachers] = useState<Teacher[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_TEACHERS);
-      if (saved) {
-        const parsed: Teacher[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out all demo teachers placed for sample display
-          const realTeachers = parsed
-            .filter(t => !isDemoTeacher(t))
-            .map(t => {
-              if (t.id === 't-admin' || t.staffId === 'STP/ADMIN/001' || t.name.includes('Peter Sule') || t.name.trim().toUpperCase() === 'SUPER ADMIN') {
-                return {
-                  ...t,
-                  name: 'SUPER ADMIN',
-                  role: 'super_admin' as const,
-                  password: SUPER_ADMIN_PORTAL_PASSWORD,
-                  assignedClasses: [...SCHOOL_CLASSES],
-                  assignedSubjects: [...ALL_SUBJECTS],
-                };
-              }
-              return t;
-            });
-
-          // Always ensure Super Admin account is available
-          const hasAdmin = realTeachers.some(t => t.id === 't-admin' || t.staffId === 'STP/ADMIN/001' || t.role === 'super_admin');
-          const finalTeachers = hasAdmin ? realTeachers : [INITIAL_TEACHERS[0], ...realTeachers];
-
-          try {
-            localStorage.setItem(STORAGE_KEY_TEACHERS, JSON.stringify(finalTeachers));
-          } catch (_) {}
-
-          return finalTeachers;
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return INITIAL_TEACHERS;
-  });
-
-  // Helper to normalize student scores to match section CA config (e.g. SSS 1-3: CA1=10, CA2=10, CA3=10, CA4=0, Exam=70)
+  // Helper to normalize student scores to match section CA config
   const sanitizeStudentScores = (stList: Student[]): Student[] => {
     return stList.map(st => {
-      const isSenior = !isJuniorClass(st.className);
-      if (!isSenior) return st;
+      const isSenior = isSeniorClass(st.className);
+      const isPrimary = isPrimaryClass(st.className);
+      if (!isSenior && !isPrimary) return st;
 
       const sanitizeScoreMap = (scores: Record<string, SubjectScore>) => {
         const result: Record<string, SubjectScore> = {};
         for (const [subj, sc] of Object.entries(scores)) {
-          const ca1 = sc.ca1 !== null && sc.ca1 !== undefined ? Math.min(10, Math.max(0, sc.ca1)) : null;
-          const ca2 = sc.ca2 !== null && sc.ca2 !== undefined ? Math.min(10, Math.max(0, sc.ca2)) : null;
-          const ca3 = sc.ca3 !== null && sc.ca3 !== undefined ? Math.min(10, Math.max(0, sc.ca3)) : null;
-          const ca4 = 0; // SSS 1-3 does not use CA4
-          const exam = sc.exam !== null && sc.exam !== undefined ? Math.min(70, Math.max(0, sc.exam)) : null;
+          let ca1 = sc.ca1;
+          let ca2 = sc.ca2;
+          let ca3 = sc.ca3;
+          let ca4 = sc.ca4;
+          let exam = sc.exam;
+
+          if (isSenior) {
+            ca1 = sc.ca1 !== null && sc.ca1 !== undefined ? Math.min(10, Math.max(0, sc.ca1)) : null;
+            ca2 = sc.ca2 !== null && sc.ca2 !== undefined ? Math.min(10, Math.max(0, sc.ca2)) : null;
+            ca3 = sc.ca3 !== null && sc.ca3 !== undefined ? Math.min(10, Math.max(0, sc.ca3)) : null;
+            ca4 = 0;
+            exam = sc.exam !== null && sc.exam !== undefined ? Math.min(70, Math.max(0, sc.exam)) : null;
+          } else if (isPrimary) {
+            ca1 = sc.ca1 !== null && sc.ca1 !== undefined ? Math.min(15, Math.max(0, sc.ca1)) : null;
+            ca2 = sc.ca2 !== null && sc.ca2 !== undefined ? Math.min(15, Math.max(0, sc.ca2)) : null;
+            ca3 = sc.ca3 !== null && sc.ca3 !== undefined ? Math.min(10, Math.max(0, sc.ca3)) : null;
+            ca4 = 0;
+            exam = sc.exam !== null && sc.exam !== undefined ? Math.min(60, Math.max(0, sc.exam)) : null;
+          }
+
           const total = computeTotal(ca1, ca2, ca3, ca4, exam);
           result[subj] = {
             ...sc,
@@ -282,34 +318,30 @@ export function useSchoolStore() {
     });
   };
 
-  // 4. Students (filtered to retain only real registered students, removing all demo students)
+  // 4. Students - 100% Isolated per School (Secondary starts clean; Primary starts with Primary Pupils)
   const [students, setStudents] = useState<Student[]>(() => {
+    const targetSchool = getInitialActiveSchoolId();
     try {
-      const saved = localStorage.getItem(STORAGE_KEY_STUDENTS);
+      const saved = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, targetSchool));
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out all demo students placed for mock display
           const realStudents = parsed.filter((s: Student) => !isDemoStudent(s));
           if (realStudents.length > 0) {
             const sanitized = sanitizeStudentScores(realStudents);
-            const ranked = calculateAllRankings(sanitized, 'Third Term');
-            try {
-              localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(ranked));
-            } catch (_) {}
+            const ranked = calculateAllRankings(
+              sanitized, 
+              'Third Term', 
+              targetSchool === 'stpauls-primary' ? INITIAL_PRIMARY_SCHOOL_SETTINGS.gradingScale : undefined
+            );
             return ranked;
-          } else {
-            try {
-              localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify([]));
-            } catch (_) {}
-            return [];
           }
         }
       }
     } catch (e) {
       console.error(e);
     }
-    return [];
+    return targetSchool === 'stpauls-primary' ? INITIAL_PRIMARY_STUDENTS : [];
   });
 
   // Active Term state across the application
@@ -370,12 +402,22 @@ export function useSchoolStore() {
     });
 
     // Run initial direct bidirectional synchronization between Cloud Firestore and Local Storage
-    synchronizeCloudAndLocalStorage(students, settings).then(({ mergedStudents, isUpdated }) => {
+    synchronizeCloudAndLocalStorage(students, settings, activeSchoolId).then(({ mergedStudents, isUpdated }) => {
       if (isUpdated && mergedStudents && mergedStudents.length > 0) {
-        const ranked = calculateAllRankings(mergedStudents, activeTerm);
+        const ranked = calculateAllRankings(mergedStudents, activeTerm, settings.gradingScale);
         setStudents(ranked);
         try {
-          localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(ranked));
+          localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
+        } catch (_) {}
+      }
+    });
+
+    // Run initial teacher staff roster synchronization with Cloud Firestore
+    synchronizeTeachersCloudAndLocal(teachers, activeSchoolId).then(({ mergedTeachers, isUpdated }) => {
+      if (isUpdated && mergedTeachers && mergedTeachers.length > 0) {
+        setTeachers(mergedTeachers);
+        try {
+          localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, activeSchoolId), JSON.stringify(mergedTeachers));
         } catch (_) {}
       }
     });
@@ -392,6 +434,7 @@ export function useSchoolStore() {
   }, [schoolRegistry, activeSchoolId]);
 
   useEffect(() => {
+    if (activeSchoolRef.current !== activeSchoolId) return;
     try {
       localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(students));
     } catch (e) {
@@ -407,6 +450,7 @@ export function useSchoolStore() {
   }, [students, settings, teachers, activeSchoolId]);
 
   useEffect(() => {
+    if (activeSchoolRef.current !== activeSchoolId) return;
     try {
       localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, activeSchoolId), JSON.stringify(teachers));
     } catch (e) {
@@ -415,6 +459,7 @@ export function useSchoolStore() {
   }, [teachers, activeSchoolId]);
 
   useEffect(() => {
+    if (activeSchoolRef.current !== activeSchoolId) return;
     try {
       localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_SETTINGS, activeSchoolId), JSON.stringify(settings));
     } catch (e) {
@@ -423,6 +468,7 @@ export function useSchoolStore() {
   }, [settings, activeSchoolId]);
 
   useEffect(() => {
+    if (activeSchoolRef.current !== activeSchoolId) return;
     try {
       localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_SHEETS, activeSchoolId), JSON.stringify(sheetsConfig));
     } catch (e) {
@@ -431,6 +477,7 @@ export function useSchoolStore() {
   }, [sheetsConfig, activeSchoolId]);
 
   useEffect(() => {
+    if (activeSchoolRef.current !== activeSchoolId) return;
     try {
       localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_LOGS, activeSchoolId), JSON.stringify(auditLogs));
     } catch (e) {
@@ -555,13 +602,34 @@ export function useSchoolStore() {
       const updated = prevStudents.map(student => {
         if (student.id !== studentId) return student;
 
-        const isSenior = !isJuniorClass(student.className);
-        // For SSS 1-3, enforce CA1 (10), CA2 (10), CA3 (10), CA4 (0), Exam (70)
-        const finalCa1 = ca1 !== null && ca1 !== undefined ? (isSenior ? Math.min(10, Math.max(0, ca1)) : ca1) : null;
-        const finalCa2 = ca2 !== null && ca2 !== undefined ? (isSenior ? Math.min(10, Math.max(0, ca2)) : ca2) : null;
-        const finalCa3 = ca3 !== null && ca3 !== undefined ? (isSenior ? Math.min(10, Math.max(0, ca3)) : ca3) : null;
-        const finalCa4 = isSenior ? 0 : ca4;
-        const finalExam = exam !== null && exam !== undefined ? (isSenior ? Math.min(70, Math.max(0, exam)) : exam) : null;
+        const isSenior = isSeniorClass(student.className);
+        const isPrimary = isPrimaryClass(student.className);
+
+        let finalCa1 = ca1;
+        let finalCa2 = ca2;
+        let finalCa3 = ca3;
+        let finalCa4 = ca4;
+        let finalExam = exam;
+
+        if (isSenior) {
+          finalCa1 = ca1 !== null && ca1 !== undefined ? Math.min(10, Math.max(0, ca1)) : null;
+          finalCa2 = ca2 !== null && ca2 !== undefined ? Math.min(10, Math.max(0, ca2)) : null;
+          finalCa3 = ca3 !== null && ca3 !== undefined ? Math.min(10, Math.max(0, ca3)) : null;
+          finalCa4 = 0;
+          finalExam = exam !== null && exam !== undefined ? Math.min(70, Math.max(0, exam)) : null;
+        } else if (isPrimary) {
+          finalCa1 = ca1 !== null && ca1 !== undefined ? Math.min(15, Math.max(0, ca1)) : null;
+          finalCa2 = ca2 !== null && ca2 !== undefined ? Math.min(15, Math.max(0, ca2)) : null;
+          finalCa3 = ca3 !== null && ca3 !== undefined ? Math.min(10, Math.max(0, ca3)) : null;
+          finalCa4 = 0;
+          finalExam = exam !== null && exam !== undefined ? Math.min(60, Math.max(0, exam)) : null;
+        } else {
+          finalCa1 = ca1 !== null && ca1 !== undefined ? Math.min(10, Math.max(0, ca1)) : null;
+          finalCa2 = ca2 !== null && ca2 !== undefined ? Math.min(10, Math.max(0, ca2)) : null;
+          finalCa3 = ca3 !== null && ca3 !== undefined ? Math.min(10, Math.max(0, ca3)) : null;
+          finalCa4 = ca4 !== null && ca4 !== undefined ? Math.min(10, Math.max(0, ca4)) : null;
+          finalExam = exam !== null && exam !== undefined ? Math.min(60, Math.max(0, exam)) : null;
+        }
 
         const total = computeTotal(finalCa1, finalCa2, finalCa3, finalCa4, finalExam);
         const grade = calculateGrade(total, settings.gradingScale);
@@ -608,16 +676,22 @@ export function useSchoolStore() {
         return updatedStudent;
       });
 
-      // Recalculate rankings across all students and immediately persist to Local Storage
-      const ranked = calculateAllRankings(updated, activeTerm);
+      // Recalculate rankings across all students and immediately persist to Local Storage for active school
+      const ranked = calculateAllRankings(updated, activeTerm, settings.gradingScale);
       try {
-        localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(ranked));
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
       } catch (_) {}
+      // Immediate background push to Cloud Firestore
+      const targetStudent = updated.find(s => s.id === studentId);
+      if (targetStudent) {
+        saveSingleStudentToCloud(targetStudent, activeSchoolId);
+      }
+      saveSystemSnapshotToCloud(ranked, settings, teachers, activeSchoolId);
       return ranked;
     });
 
     addLog('Updated Score', `${currentUser.name} recorded ${subject} mark for student ID: ${studentId} (${targetTerm})`);
-  }, [currentUser, activeTerm, students, canEditSubject, addLog]);
+  }, [currentUser, activeTerm, students, canEditSubject, settings, teachers, activeSchoolId, addLog]);
 
   // Batch update scores for an entire class in a subject with strict anti-manipulation authorization guard
   const batchUpdateSubjectScores = useCallback((
@@ -694,15 +768,18 @@ export function useSchoolStore() {
         return updatedStudent;
       });
 
-      const ranked = calculateAllRankings(updated, activeTerm);
+      const ranked = calculateAllRankings(updated, activeTerm, settings.gradingScale);
       try {
-        localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(ranked));
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
       } catch (_) {}
+      // Immediate background flush to Cloud Firestore
+      flushPendingScoresToCloud();
+      saveSystemSnapshotToCloud(ranked, settings, teachers, activeSchoolId);
       return ranked;
     });
 
     addLog('Batch Score Update', `Synchronized scores for ${updates.length} students in ${className} (${subject} - ${targetTerm})`);
-  }, [currentUser, activeTerm, canEditSubject, addLog]);
+  }, [currentUser, activeTerm, canEditSubject, settings, teachers, activeSchoolId, addLog]);
 
   // Update affective / psychomotor domain assessments & form teacher comments
   const updateStudentAssessments = useCallback((
@@ -712,52 +789,85 @@ export function useSchoolStore() {
     daysPresent: number,
     formTeacherComment: string
   ) => {
+    let targetUpdated: Student | undefined;
     setStudents(prevStudents => {
-      return prevStudents.map(student => {
+      const updated = prevStudents.map(student => {
         if (student.id !== studentId) return student;
-        return {
+        const modified: Student = {
           ...student,
           affective,
           psychomotor,
           daysPresent,
           formTeacherComment,
         };
+        targetUpdated = modified;
+        return modified;
       });
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(updated));
+      } catch (_) {}
+      if (targetUpdated) {
+        saveSingleStudentToCloud(targetUpdated, activeSchoolId);
+      }
+      saveSystemSnapshotToCloud(updated, settings, teachers, activeSchoolId);
+      return updated;
     });
 
     addLog('Updated Domain Assessments', `Updated behavioral/psychomotor ratings for student ${studentId}`);
-  }, [addLog]);
+  }, [settings, teachers, activeSchoolId, addLog]);
 
   // Update Principal's comment for student
   const updatePrincipalComment = useCallback((studentId: string, principalComment: string) => {
+    let targetUpdated: Student | undefined;
     setStudents(prevStudents => {
-      return prevStudents.map(student => {
+      const updated = prevStudents.map(student => {
         if (student.id !== studentId) return student;
-        return {
+        const modified: Student = {
           ...student,
           principalComment,
         };
+        targetUpdated = modified;
+        return modified;
       });
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(updated));
+      } catch (_) {}
+      if (targetUpdated) {
+        saveSingleStudentToCloud(targetUpdated, activeSchoolId);
+      }
+      saveSystemSnapshotToCloud(updated, settings, teachers, activeSchoolId);
+      return updated;
     });
 
     addLog('Updated Principal Comment', `Principal updated remark for student ${studentId}`);
-  }, [addLog]);
+  }, [settings, teachers, activeSchoolId, addLog]);
 
   // Update both Form Teacher and Principal comments for a student
   const updateStudentComments = useCallback((studentId: string, formTeacherComment: string, principalComment: string) => {
+    let targetUpdated: Student | undefined;
     setStudents(prevStudents => {
-      return prevStudents.map(student => {
+      const updated = prevStudents.map(student => {
         if (student.id !== studentId) return student;
-        return {
+        const modified: Student = {
           ...student,
           formTeacherComment,
           principalComment,
         };
+        targetUpdated = modified;
+        return modified;
       });
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(updated));
+      } catch (_) {}
+      if (targetUpdated) {
+        saveSingleStudentToCloud(targetUpdated, activeSchoolId);
+      }
+      saveSystemSnapshotToCloud(updated, settings, teachers, activeSchoolId);
+      return updated;
     });
 
     addLog('Updated Remarks', `Saved Form Teacher and Principal remarks for student ${studentId}`);
-  }, [addLog]);
+  }, [settings, teachers, activeSchoolId, addLog]);
 
   // Batch update comments for a whole class
   const batchUpdateComments = useCallback((
@@ -765,20 +875,31 @@ export function useSchoolStore() {
     updates: Array<{ studentId: string; formTeacherComment: string; principalComment: string }>
   ) => {
     const updateMap = new Map(updates.map(u => [u.studentId, u]));
+    const modifiedStudents: Student[] = [];
     setStudents(prevStudents => {
-      return prevStudents.map(student => {
+      const updated = prevStudents.map(student => {
         const update = updateMap.get(student.id);
         if (!update) return student;
-        return {
+        const modified: Student = {
           ...student,
           formTeacherComment: update.formTeacherComment,
           principalComment: update.principalComment,
         };
+        modifiedStudents.push(modified);
+        return modified;
       });
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(updated));
+      } catch (_) {}
+      if (modifiedStudents.length > 0) {
+        syncFullStudentsDatasetToCloud(modifiedStudents, activeSchoolId);
+      }
+      saveSystemSnapshotToCloud(updated, settings, teachers, activeSchoolId);
+      return updated;
     });
 
     addLog('Batch Remarks Update', `Synchronized Form Teacher & Principal remarks for ${updates.length} students in ${className}`);
-  }, [addLog]);
+  }, [settings, teachers, activeSchoolId, addLog]);
 
   // Update a student's passport photo with strict identity binding (prevents replacing another student's photo)
   const updateStudentPassport = useCallback((studentId: string, passportPhoto: string) => {
@@ -807,14 +928,14 @@ export function useSchoolStore() {
         };
       });
       try {
-        localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(updated));
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(updated));
       } catch (_) {}
-      saveSystemSnapshotToCloud(updated, settings);
+      saveSystemSnapshotToCloud(updated, settings, teachers, activeSchoolId);
       return updated;
     });
 
     addLog('Updated Student Passport', `Verified and sealed passport photograph for student: ${targetStudent.name} (Admission ID: ${targetStudent.learnerId})`);
-  }, [students, currentUser, canUpdatePassport, settings, addLog]);
+  }, [students, currentUser, canUpdatePassport, settings, teachers, activeSchoolId, addLog]);
 
   // Batch update multiple passport photos with strict studentId keying and authorization check
   const batchUpdatePassports = useCallback((updates: Array<{ studentId: string; passportPhoto: string }>) => {
@@ -838,14 +959,14 @@ export function useSchoolStore() {
         };
       });
       try {
-        localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(updated));
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(updated));
       } catch (_) {}
-      saveSystemSnapshotToCloud(updated, settings);
+      saveSystemSnapshotToCloud(updated, settings, teachers, activeSchoolId);
       return updated;
     });
 
     addLog('Batch Passport Update', `Verified and sealed passport photographs for ${count} students`);
-  }, [canUpdatePassport, settings, addLog]);
+  }, [canUpdatePassport, settings, teachers, activeSchoolId, addLog]);
 
   // Register a new student with complete biodata & passport photo
   const registerStudent = useCallback((newStudentData: Partial<Student> & { name: string; className: string }): Student => {
@@ -857,6 +978,7 @@ export function useSchoolStore() {
         localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
       } catch (_) {}
       saveSystemSnapshotToCloud(ranked, settings, teachers, activeSchoolId);
+      saveSingleStudentToCloud(newStudent, activeSchoolId);
       return ranked;
     });
     addLog('Registered Student', `Registered learner ${newStudent.name} (${newStudent.learnerId}) into ${newStudent.className}`);
@@ -866,6 +988,7 @@ export function useSchoolStore() {
   // Update an existing student's biodata, passport, role, subjects, class, or academic record
   const updateStudent = useCallback((studentId: string, updates: Partial<Student>) => {
     setStudents(prev => {
+      let modifiedStudent: Student | undefined;
       const updated = prev.map(s => {
         if (s.id !== studentId) return s;
 
@@ -910,7 +1033,7 @@ export function useSchoolStore() {
 
         const roleToSet = updates.studentRole || updates.biodata?.studentRole || s.studentRole || 'Regular Student';
 
-        return {
+        const merged: Student = {
           ...s,
           ...updates,
           scores: updatedScores,
@@ -925,19 +1048,24 @@ export function useSchoolStore() {
           affective: updates.affective ? { ...s.affective, ...updates.affective } : s.affective,
           psychomotor: updates.psychomotor ? { ...s.psychomotor, ...updates.psychomotor } : s.psychomotor,
         };
+        modifiedStudent = merged;
+        return merged;
       });
-      const ranked = calculateAllRankings(updated);
+      const ranked = calculateAllRankings(updated, activeTerm, settings.gradingScale);
       try {
-        localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(ranked));
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
       } catch (_) {}
-      saveSystemSnapshotToCloud(ranked, settings);
+      saveSystemSnapshotToCloud(ranked, settings, teachers, activeSchoolId);
+      if (modifiedStudent) {
+        saveSingleStudentToCloud(modifiedStudent, activeSchoolId);
+      }
       return ranked;
     });
     addLog(
       'Updated Student Biodata', 
       `Super Admin/Staff updated records for student ID: ${studentId}${updates.studentRole ? ` (Role: ${updates.studentRole})` : ''}${updates.className ? ` (Class: ${updates.className})` : ''}${updates.enrolledSubjects ? ` (${updates.enrolledSubjects.length} Subjects)` : ''}`
     );
-  }, [settings, addLog]);
+  }, [settings, teachers, activeSchoolId, activeTerm, addLog]);
 
   // Delete/deregister a student
   const deleteStudent = useCallback((studentId: string) => {
@@ -945,13 +1073,19 @@ export function useSchoolStore() {
       const student = prev.find(s => s.id === studentId);
       const studentName = student ? student.name : studentId;
       const updated = prev.filter(s => s.id !== studentId);
+      const ranked = calculateAllRankings(updated, activeTerm, settings.gradingScale);
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
+      } catch (_) {}
+      saveSystemSnapshotToCloud(ranked, settings, teachers, activeSchoolId);
+      deleteStudentFromCloud(studentId, activeSchoolId);
       addLog('Deregistered Student', `Removed learner ${studentName} (${studentId}) from registry`);
-      return calculateAllRankings(updated);
+      return ranked;
     });
-  }, [addLog]);
+  }, [settings, teachers, activeSchoolId, activeTerm, addLog]);
 
   // Super Admin: Accept already registered students from another portal (CSV/JSON/API format)
-  const importExternalPortalStudents = useCallback((
+  const importExternalPortalStudents = useCallback(async (
     incoming: Array<{
       name: string;
       className: string;
@@ -962,62 +1096,120 @@ export function useSchoolStore() {
       sourcePortal?: string;
     }>,
     mode: 'merge' | 'append' = 'merge'
-  ): { imported: number; updated: number; total: number } => {
+  ): Promise<{ imported: number; updated: number; total: number }> => {
     let importedCount = 0;
     let updatedCount = 0;
 
-    setStudents(prev => {
-      let currentList = [...prev];
-      const existingIdMap = new Map(currentList.map(s => [s.learnerId.trim().toUpperCase(), s]));
-
-      for (const item of incoming) {
-        if (!item.name || !item.className) continue;
-        const normLearnerId = item.learnerId ? item.learnerId.trim().toUpperCase() : null;
-
-        if (mode === 'merge' && normLearnerId && existingIdMap.has(normLearnerId)) {
-          // Merge & update existing student
-          const existing = existingIdMap.get(normLearnerId)!;
-          const updatedIndex = currentList.findIndex(s => s.id === existing.id);
-          if (updatedIndex !== -1) {
-            currentList[updatedIndex] = {
-              ...currentList[updatedIndex],
-              name: item.name || currentList[updatedIndex].name,
-              gender: item.gender || currentList[updatedIndex].gender,
-              className: item.className || currentList[updatedIndex].className,
-              // Strict Anti-Replacement: Always preserve existing verified student passport photo
-              passportPhoto: currentList[updatedIndex].passportPhoto || item.passportPhoto,
-              biodata: {
-                ...currentList[updatedIndex].biodata,
-                ...(item.biodata || {}),
-              },
-              sourcePortal: item.sourcePortal || 'External Portal Integration',
-            };
-            updatedCount++;
-          }
-        } else {
-          // Append as new student
-          const newStudent = createDefaultStudentTemplate({
-            ...item,
-            sourcePortal: item.sourcePortal || 'External Portal Integration',
-          });
-          currentList.push(newStudent);
-          if (normLearnerId) {
-            existingIdMap.set(normLearnerId, newStudent);
-          }
-          importedCount++;
+    // Direct retrieval of current students list
+    let currentList: Student[] = [];
+    try {
+      const saved = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          currentList = parsed;
         }
       }
+    } catch (_) {}
+    if (currentList.length === 0) {
+      currentList = [...students];
+    }
 
-      return calculateAllRankings(currentList);
-    });
+    const existingIdMap = new Map(currentList.map(s => [s.learnerId ? s.learnerId.trim().toUpperCase() : '', s]));
+    const existingKeyMap = new Map(currentList.map(s => [s.id.trim().toUpperCase(), s]));
+    const existingNameClassMap = new Map(currentList.map(s => [
+      `${s.name.trim().toUpperCase()}__${normalizeClass(s.className).trim().toUpperCase()}`,
+      s
+    ]));
+
+    for (let i = 0; i < incoming.length; i++) {
+      const item = incoming[i];
+      if (!item.name || !item.name.trim()) continue;
+
+      const normalizedClass = normalizeClass(item.className || 'JSS 1 A');
+      const cleanName = item.name.trim().toUpperCase();
+      const normLearnerId = item.learnerId ? item.learnerId.trim().toUpperCase() : null;
+      const nameClassKey = `${cleanName}__${normalizedClass.toUpperCase()}`;
+
+      // Check if matches existing student either by learnerId OR (name + class)
+      let existing: Student | undefined;
+      if (normLearnerId && existingIdMap.has(normLearnerId)) {
+        existing = existingIdMap.get(normLearnerId);
+      } else if (existingNameClassMap.has(nameClassKey)) {
+        existing = existingNameClassMap.get(nameClassKey);
+      }
+
+      if (mode === 'merge' && existing) {
+        // Merge & update existing student
+        const updatedIndex = currentList.findIndex(s => s.id === existing!.id);
+        if (updatedIndex !== -1) {
+          currentList[updatedIndex] = {
+            ...currentList[updatedIndex],
+            name: cleanName,
+            gender: item.gender || currentList[updatedIndex].gender,
+            className: normalizedClass,
+            // Strict Anti-Replacement: Always preserve existing verified student passport photo
+            passportPhoto: currentList[updatedIndex].passportPhoto || item.passportPhoto,
+            biodata: {
+              ...currentList[updatedIndex].biodata,
+              ...(item.biodata || {}),
+            },
+            sourcePortal: item.sourcePortal || 'Excel / CSV Registry Upload',
+          };
+          updatedCount++;
+        }
+      } else {
+        // Append as new student with full school settings configuration
+        const prefix = settings.learnerIdPrefix || 'SPC/';
+        const cleanPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`;
+        const year = new Date().getFullYear();
+        const autoLearnerId = item.learnerId?.trim() || `${cleanPrefix}${year}/${Math.floor(100000 + Math.random() * 900000)}`;
+
+        const newStudent = createDefaultStudentTemplate({
+          ...item,
+          name: cleanName,
+          className: normalizedClass,
+          learnerId: autoLearnerId,
+          sourcePortal: item.sourcePortal || 'Excel / CSV Registry Upload',
+        }, settings);
+
+        currentList.push(newStudent);
+        existingIdMap.set(autoLearnerId.toUpperCase(), newStudent);
+        existingKeyMap.set(newStudent.id.trim().toUpperCase(), newStudent);
+        existingNameClassMap.set(`${cleanName}__${normalizedClass.toUpperCase()}`, newStudent);
+        importedCount++;
+      }
+    }
+
+    const ranked = calculateAllRankings(currentList, activeTerm, settings.gradingScale);
+
+    // 1. Synchronously persist to Local Storage immediately so it NEVER disappears on reload!
+    try {
+      localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
+    } catch (err) {
+      console.error('Failed to write students to localStorage:', err);
+    }
+
+    // 2. Synchronously update React state
+    setStudents(ranked);
+
+    // 3. Immediately persist to Cloud Firestore (both master system snapshot and individual student subcollections)
+    if (ranked.length > 0) {
+      try {
+        await saveSystemSnapshotToCloud(ranked, settings, teachers, activeSchoolId);
+        await syncFullStudentsDatasetToCloud(ranked, activeSchoolId);
+      } catch (cloudErr) {
+        console.warn('Could not save snapshot to Cloud Firestore:', cloudErr);
+      }
+    }
 
     addLog(
-      'External Portal Sync',
-      `Super Admin integrated ${importedCount + updatedCount} students from external portal (${importedCount} newly registered, ${updatedCount} biodata merged)`
+      'CSV / Registry Import',
+      `Super Admin integrated ${importedCount + updatedCount} students from CSV upload (${importedCount} newly registered, ${updatedCount} biodata merged) for ${activeSchoolId}`
     );
 
     return { imported: importedCount, updated: updatedCount, total: importedCount + updatedCount };
-  }, [addLog]);
+  }, [students, settings, teachers, activeSchoolId, activeTerm, addLog]);
 
   // Helper to extract Math & English terminal scores accurately
   const getStudentTerminalCorePerformance = (student: Student, term: string = 'Third Term') => {
@@ -1369,25 +1561,46 @@ export function useSchoolStore() {
     addLog('School Settings Updated', `Super Admin updated parameters: ${Object.keys(updates).join(', ')}`);
   }, [activeSchoolId, addLog]);
 
-  // Switch Active School Portal
+  // Switch Active School Portal with 100% Strict Data Isolation
   const switchSchool = useCallback((targetSchoolId: string) => {
     const targetProfile = schoolRegistry.find(s => s.id === targetSchoolId);
     if (!targetProfile) return;
 
+    // 1. Immediately flush & save current active school state so nothing is lost
+    const prevSchoolId = activeSchoolId;
+    try {
+      localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, prevSchoolId), JSON.stringify(students));
+      localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, prevSchoolId), JSON.stringify(teachers));
+      localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_SETTINGS, prevSchoolId), JSON.stringify(settings));
+      localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_LOGS, prevSchoolId), JSON.stringify(auditLogs));
+    } catch (_) {}
+
+    // 2. Set active school identifiers
+    activeSchoolRef.current = targetSchoolId;
     setActiveSchoolIdState(targetSchoolId);
     setActiveSchoolId(targetSchoolId);
+    try {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_SCHOOL, targetSchoolId);
+    } catch (_) {}
 
-    // 1. Load settings
-    let loadedSettings = INITIAL_SCHOOL_SETTINGS;
+    // 3. Load target school settings with strict isolation
+    let loadedSettings: SchoolSettings;
     try {
       const saved = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_SETTINGS, targetSchoolId));
       if (saved) {
         loadedSettings = JSON.parse(saved);
+      } else if (targetSchoolId === 'stpauls-primary') {
+        loadedSettings = INITIAL_PRIMARY_SCHOOL_SETTINGS;
+      } else if (targetSchoolId === 'stpaul') {
+        loadedSettings = INITIAL_SCHOOL_SETTINGS;
       } else {
         loadedSettings = {
           ...INITIAL_SCHOOL_SETTINGS,
           schoolId: targetProfile.id,
           schoolName: targetProfile.name,
+          shortName: targetProfile.shortName || targetProfile.name,
+          tagline: targetProfile.tagline || '',
+          section: targetProfile.section,
           schoolMotto: targetProfile.motto || INITIAL_SCHOOL_SETTINGS.schoolMotto,
           schoolAddress: targetProfile.address,
           schoolEmail: targetProfile.email,
@@ -1397,70 +1610,106 @@ export function useSchoolStore() {
           schoolLogo: targetProfile.logo || generateSchoolCrestSvg(targetProfile.name),
           schoolStamp: targetProfile.stamp || generateSchoolStampSvg(targetProfile.name, targetProfile.address, targetProfile.motto),
           theme: targetProfile.theme || 'navy-gold',
-          classes: targetProfile.classes || [...SCHOOL_CLASSES],
-          juniorSubjects: targetProfile.juniorSubjects || [...JUNIOR_SUBJECTS],
-          seniorSubjects: targetProfile.seniorSubjects || [...SENIOR_SUBJECTS],
+          classes: targetProfile.classes || (targetProfile.section === 'primary' ? [...PRIMARY_CLASSES] : [...SCHOOL_CLASSES]),
+          juniorSubjects: targetProfile.juniorSubjects || (targetProfile.section === 'primary' ? [...PRIMARY_SUBJECTS] : [...JUNIOR_SUBJECTS]),
+          seniorSubjects: targetProfile.seniorSubjects || (targetProfile.section === 'primary' ? [...PRIMARY_SUBJECTS] : [...SENIOR_SUBJECTS]),
           adminEmail: targetProfile.adminEmail,
           learnerIdPrefix: targetProfile.learnerIdPrefix,
           staffIdPrefix: targetProfile.staffIdPrefix,
         };
       }
-    } catch (_) {}
+    } catch (_) {
+      loadedSettings = targetSchoolId === 'stpauls-primary' ? INITIAL_PRIMARY_SCHOOL_SETTINGS : INITIAL_SCHOOL_SETTINGS;
+    }
     setSettings(loadedSettings);
 
-    // 2. Load teachers
-    let loadedTeachers = INITIAL_TEACHERS;
+    // 4. Load target school teachers with strict isolation
+    let loadedTeachers: Teacher[];
+    const fallbackList = targetSchoolId === 'stpauls-primary' ? INITIAL_PRIMARY_TEACHERS : INITIAL_TEACHERS;
     try {
       const saved = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, targetSchoolId));
       if (saved) {
-        loadedTeachers = JSON.parse(saved);
+        const parsed: Teacher[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const cleaned = parsed.filter(t => t && !isDemoTeacher(t) && !WRONG_STAFF_NAMES.has(t.name?.trim() || ''));
+          const hasAdmin = cleaned.some(t => t.id === 't-admin' || t.role === 'super_admin' || t.staffId === 'STP/ADMIN/001' || t.id === 't-primary-admin');
+          loadedTeachers = hasAdmin ? cleaned : [fallbackList[0], ...cleaned];
+          localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, targetSchoolId), JSON.stringify(loadedTeachers));
+        } else {
+          loadedTeachers = fallbackList;
+        }
       } else {
-        const defaultAdmin: Teacher = {
-          id: `admin-${targetSchoolId}`,
-          name: targetProfile.adminName || 'SUPER ADMIN',
-          email: targetProfile.adminEmail || targetProfile.email,
-          role: 'super_admin',
-          staffId: `${targetProfile.staffIdPrefix || 'STAFF/'}001`,
-          assignedClasses: targetProfile.classes || [...SCHOOL_CLASSES],
-          assignedSubjects: Array.from(new Set([...(targetProfile.juniorSubjects || JUNIOR_SUBJECTS), ...(targetProfile.seniorSubjects || SENIOR_SUBJECTS)])),
-          password: SUPER_ADMIN_PORTAL_PASSWORD,
-          registeredAt: new Date().toISOString(),
-        };
-        loadedTeachers = [defaultAdmin];
+        loadedTeachers = fallbackList;
       }
-    } catch (_) {}
+    } catch (_) {
+      loadedTeachers = fallbackList;
+    }
     setTeachers(loadedTeachers);
 
-    // 3. Set current user
-    const adminUser = loadedTeachers.find(t => t.role === 'super_admin') || loadedTeachers[0];
-    if (adminUser) setCurrentUser(adminUser);
+    // 5. Set target school currentUser
+    let currentUserToSet = loadedTeachers.find(t => t.role === 'super_admin') || loadedTeachers[0];
+    try {
+      const schoolAuthKey = `stpaul_auth_teacher_id_${targetSchoolId}`;
+      const savedTeacherId = localStorage.getItem(schoolAuthKey) || (targetSchoolId === 'stpaul' ? localStorage.getItem('stpaul_auth_teacher_id') : null);
+      if (savedTeacherId) {
+        const match = loadedTeachers.find(t => t.id === savedTeacherId);
+        if (match) currentUserToSet = match;
+      }
+    } catch (_) {}
+    setCurrentUser(currentUserToSet);
 
-    // 4. Load students
+    // 6. Load target school students with strict isolation
     let loadedStudents: Student[] = [];
     try {
       const saved = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, targetSchoolId));
       if (saved) {
         loadedStudents = JSON.parse(saved);
+      } else if (targetSchoolId === 'stpauls-primary') {
+        loadedStudents = INITIAL_PRIMARY_STUDENTS;
+      } else {
+        loadedStudents = [];
       }
-    } catch (_) {}
+    } catch (_) {
+      loadedStudents = targetSchoolId === 'stpauls-primary' ? INITIAL_PRIMARY_STUDENTS : [];
+    }
     setStudents(loadedStudents);
 
-    // 5. Load active term
+    // 7. Load target school active term
     try {
       const savedTerm = localStorage.getItem(getSchoolStorageKey('stp_school_active_term', targetSchoolId));
       if (savedTerm) setActiveTermState(savedTerm);
+      else setActiveTermState('Third Term');
     } catch (_) {}
 
-    // 6. Direct Cloud Synchronization for this school
-    synchronizeCloudAndLocalStorage(loadedStudents, loadedSettings).then(({ mergedStudents, isUpdated }) => {
+    // 8. Load target school audit logs
+    try {
+      const savedLogs = localStorage.getItem(getSchoolStorageKey(STORAGE_KEY_LOGS, targetSchoolId));
+      if (savedLogs) {
+        setAuditLogs(JSON.parse(savedLogs));
+      } else {
+        setAuditLogs([
+          {
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString(),
+            teacherName: currentUserToSet.name,
+            staffId: currentUserToSet.staffId,
+            action: 'Portal Initialized',
+            details: `Strict isolated academic database initialized for ${targetProfile.name}.`,
+          }
+        ]);
+      }
+    } catch (_) {}
+
+    // 9. Direct Cloud Synchronization for this school
+    synchronizeCloudAndLocalStorage(loadedStudents, loadedSettings, targetSchoolId).then(({ mergedStudents, isUpdated }) => {
       if (isUpdated && mergedStudents && mergedStudents.length > 0) {
-        const ranked = calculateAllRankings(mergedStudents, loadedSettings.term);
+        const ranked = calculateAllRankings(mergedStudents, loadedSettings.term, loadedSettings.gradingScale);
         setStudents(ranked);
       }
     });
 
     addLog('School Switched', `Active school portal switched to ${targetProfile.name} (${targetSchoolId})`);
-  }, [schoolRegistry, addLog]);
+  }, [schoolRegistry, activeSchoolId, students, teachers, settings, auditLogs, addLog]);
 
   // Create an Independent School (Sign Up with Gmail)
   const createIndependentSchool = useCallback((
@@ -1962,11 +2211,41 @@ export function useSchoolStore() {
   }, [activeTerm, addLog]);
 
   // Assign or update teacher (names, staff ID, role, classes, subjects, email, phone, etc.)
-  const updateTeacher = useCallback((updatedTeacher: Teacher) => {
-    setTeachers(prev => prev.map(t => t.id === updatedTeacher.id ? updatedTeacher : t));
+  const updateTeacher = useCallback((updatedTeacher: Teacher, immediate: boolean = true) => {
+    setTeachers(prev => {
+      const next = prev.map(t => t.id === updatedTeacher.id ? updatedTeacher : t);
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, activeSchoolId), JSON.stringify(next));
+      } catch (_) {}
+      return next;
+    });
     setCurrentUser(curr => curr.id === updatedTeacher.id ? updatedTeacher : curr);
-    addLog('Teacher Profile Updated', `Admin updated credentials and profile for ${updatedTeacher.name} (${updatedTeacher.staffId})`);
-  }, [addLog]);
+    
+    // Direct Cloud Firestore write
+    if (immediate) {
+      saveTeacherToCloud(updatedTeacher, activeSchoolId);
+    } else {
+      debounceSaveTeacherToCloud(updatedTeacher, activeSchoolId);
+    }
+
+    addLog('Teacher Profile Updated', `Admin updated credentials and profile for ${updatedTeacher.name} (${updatedTeacher.staffId}) in local & cloud`);
+  }, [activeSchoolId, addLog]);
+
+  // Synchronize entire teachers roster with Cloud Firestore on-demand
+  const syncTeachersNow = useCallback(async (): Promise<boolean> => {
+    addLog('Staff Cloud Sync Triggered', `Manual synchronization of teachers roster to Cloud Firestore for ${activeSchoolId}`);
+    return await syncTeachersToCloud(teachers, activeSchoolId);
+  }, [teachers, activeSchoolId, addLog]);
+
+  // Bulk update or replace teachers roster with local and cloud sync
+  const batchUpdateTeachers = useCallback((newTeachers: Teacher[]) => {
+    setTeachers(newTeachers);
+    try {
+      localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, activeSchoolId), JSON.stringify(newTeachers));
+    } catch (_) {}
+    syncTeachersToCloud(newTeachers, activeSchoolId);
+    addLog('Teachers Roster Updated', `Admin updated full staff roster (${newTeachers.length} staff members)`);
+  }, [activeSchoolId, addLog]);
 
   // Register a new teacher (Sign Up / Direct Assignment in Once)
   const registerTeacher = useCallback((newTeacherData: Omit<Teacher, 'id'> & { id?: string; firstName?: string; lastName?: string; title?: string }): Teacher => {
@@ -2002,13 +2281,21 @@ export function useSchoolStore() {
         t.staffId.toLowerCase() === newTeacher.staffId.toLowerCase() || 
         (newTeacher.email && t.email.toLowerCase() === newTeacher.email.toLowerCase())
       );
+      let next: Teacher[];
       if (existingIndex !== -1) {
-        const updated = [...prev];
-        updated[existingIndex] = { ...updated[existingIndex], ...newTeacher };
-        return updated;
+        next = [...prev];
+        next[existingIndex] = { ...next[existingIndex], ...newTeacher };
+      } else {
+        next = [...prev, newTeacher];
       }
-      return [...prev, newTeacher];
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, activeSchoolId), JSON.stringify(next));
+      } catch (_) {}
+      return next;
     });
+
+    // Save newly registered teacher directly to Cloud Firestore
+    saveTeacherToCloud(newTeacher, activeSchoolId);
 
     // Auto log-in newly registered teacher so they can immediately upload marks
     setCurrentUser(newTeacher);
@@ -2019,7 +2306,7 @@ export function useSchoolStore() {
     );
 
     return newTeacher;
-  }, [teachers.length, addLog]);
+  }, [teachers.length, activeSchoolId, addLog]);
 
   // Teacher Login via First Name, Last Name, Staff ID, or Email
   const loginTeacher = useCallback((staffIdOrEmail: string, password?: string): { success: boolean; teacher?: Teacher; message: string } => {
@@ -2130,12 +2417,22 @@ export function useSchoolStore() {
     if (target.role === 'admin' && teachers.filter(t => t.role === 'admin').length <= 1) {
       throw new Error('Cannot delete the primary administrator account.');
     }
-    setTeachers(prev => prev.filter(t => t.id !== teacherId));
+    setTeachers(prev => {
+      const next = prev.filter(t => t.id !== teacherId);
+      try {
+        localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, activeSchoolId), JSON.stringify(next));
+      } catch (_) {}
+      return next;
+    });
+
+    // Directly delete from Cloud Firestore
+    deleteTeacherFromCloud(teacherId, activeSchoolId);
+
     if (currentUser.id === teacherId) {
       setCurrentUser(INITIAL_TEACHERS[0]);
     }
-    addLog('Teacher Removed', `Removed teacher ${target.name} (${target.staffId}) from roster`);
-  }, [teachers, currentUser.id, addLog]);
+    addLog('Teacher Removed', `Removed teacher ${target.name} (${target.staffId}) from roster & Cloud database`);
+  }, [teachers, currentUser.id, activeSchoolId, addLog]);
 
   // Reset data to clean official baseline
   const resetToSeedData = useCallback(() => {
@@ -2144,6 +2441,15 @@ export function useSchoolStore() {
     setSettings(INITIAL_SCHOOL_SETTINGS);
     addLog('System Reset', 'Reset school records and broadsheets to official clean baseline');
   }, [addLog]);
+
+  // Restore official teaching staff roster from College Register
+  const restoreOfficialTeachers = useCallback(() => {
+    const cleanTeachers = activeSchoolId === 'stpauls-primary' ? INITIAL_PRIMARY_TEACHERS : INITIAL_TEACHERS;
+    setTeachers(cleanTeachers);
+    localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_TEACHERS, activeSchoolId), JSON.stringify(cleanTeachers));
+    syncTeachersToCloud(cleanTeachers, activeSchoolId);
+    addLog('Staff Roster Synchronized', 'Synchronized teaching staff roster with official College register (23 teachers + Super Admin)');
+  }, [activeSchoolId, addLog]);
 
   return {
     schoolRegistry,
@@ -2173,6 +2479,7 @@ export function useSchoolStore() {
     updateGradingScale,
     teachers,
     updateTeacher,
+    batchUpdateTeachers,
     registerTeacher,
     loginTeacher,
     deleteTeacher,
@@ -2201,18 +2508,22 @@ export function useSchoolStore() {
     bulkPromoteStudents,
     promoteStudentsInBulk,
     resetToSeedData,
+    restoreOfficialTeachers,
     addLog,
     cloudSyncInfo,
+    syncTeachersNow,
     forceCloudSync: useCallback(async () => {
-      addLog('Cloud Sync Triggered', 'Manual direct synchronization between Cloud Firestore and Local Storage');
-      const { mergedStudents, isUpdated } = await synchronizeCloudAndLocalStorage(students, settings);
+      addLog('Cloud Sync Triggered', `Manual direct synchronization between Cloud Firestore and Local Storage for ${activeSchoolId}`);
+      const { mergedStudents, isUpdated } = await synchronizeCloudAndLocalStorage(students, settings, activeSchoolId);
       if (isUpdated || (mergedStudents && mergedStudents.length > 0)) {
-        const ranked = calculateAllRankings(mergedStudents, activeTerm);
+        const ranked = calculateAllRankings(mergedStudents, activeTerm, settings.gradingScale);
         setStudents(ranked);
         try {
-          localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(ranked));
+          localStorage.setItem(getSchoolStorageKey(STORAGE_KEY_STUDENTS, activeSchoolId), JSON.stringify(ranked));
         } catch (_) {}
       }
-    }, [students, settings, activeTerm, addLog]),
+      // Also synchronize teachers
+      await synchronizeTeachersCloudAndLocal(teachers, activeSchoolId);
+    }, [students, settings, teachers, activeSchoolId, activeTerm, addLog]),
   };
 }

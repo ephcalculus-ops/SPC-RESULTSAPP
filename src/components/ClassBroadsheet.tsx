@@ -745,12 +745,12 @@ export const ClassBroadsheet: React.FC<ClassBroadsheetProps> = ({
 
           <div className="flex items-center space-x-6 text-xs text-slate-700">
             <div className="text-center">
-              <span className="font-bold underline block font-serif text-[11px]">Mr. Kenneth Adams</span>
+              <span className="font-bold underline block font-serif text-[11px]">{settings.examOfficerName || 'Examination Officer'}</span>
               <span className="text-[9px] text-slate-500 uppercase">Examination Officer</span>
             </div>
             <div className="text-center">
-              <span className="font-bold underline block font-serif text-[11px]">SUPER ADMIN</span>
-              <span className="text-[9px] text-slate-500 uppercase">Super Admin / Principal</span>
+              <span className="font-bold underline block font-serif text-[11px]">{settings.principalName || 'SUPER ADMIN'}</span>
+              <span className="text-[9px] text-slate-500 uppercase">Principal / Super Admin</span>
             </div>
           </div>
         </div>

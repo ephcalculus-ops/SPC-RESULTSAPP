@@ -5,7 +5,9 @@ import {
   JUNIOR_SUBJECTS, 
   SENIOR_SUBJECTS, 
   DEFAULT_SCHOOL_LOGO,
-  DEFAULT_OFFICIAL_STAMP 
+  DEFAULT_OFFICIAL_STAMP,
+  getSchoolClasses,
+  isJuniorClass
 } from '../data/mockData';
 import { 
   ShieldCheck, 
@@ -86,9 +88,14 @@ export const PortalGate: React.FC<PortalGateProps> = ({
   // Teacher Sub-tabs: only login and signup (staff roster is removed to prevent unauthorized access to other staff)
   const [staffTab, setStaffTab] = useState<'login' | 'signup'>('login');
 
-  // Teacher Signup State with First Name and Last Name
+  const isPrimary = settings.section === 'primary';
+  const staffPrefix = settings.staffIdPrefix || (isPrimary ? 'STP/PRI/TCH/' : 'STP/TCH/');
   const nextStaffNum = teachers.length + 1;
-  const defaultStaffId = `STP/TCH/${String(nextStaffNum).padStart(3, '0')}`;
+  const defaultStaffId = `${staffPrefix}${String(nextStaffNum).padStart(3, '0')}`;
+
+  const availableSchoolClasses = useMemo(() => getSchoolClasses(settings), [settings]);
+  const defaultInitialClass = availableSchoolClasses[0] || 'JSS 1 A';
+  const defaultInitialSubject = 'MATHEMATICS';
 
   const [signupTitle, setSignupTitle] = useState('Mr.');
   const [signupFirstName, setSignupFirstName] = useState('');
@@ -100,9 +107,26 @@ export const PortalGate: React.FC<PortalGateProps> = ({
   const [signupRole, setSignupRole] = useState<UserRole>('subject_teacher');
   const [signupDept, setSignupDept] = useState('Sciences & Mathematics');
   const [signupPhone, setSignupPhone] = useState('');
-  const [signupClasses, setSignupClasses] = useState<string[]>(['SSS 1 A', 'SSS 1 B']);
-  const [signupSubjects, setSignupSubjects] = useState<string[]>(['MATHEMATICS']);
-  const [signupFormTeacherClass, setSignupFormTeacherClass] = useState<string>('SSS 1 A');
+  const [signupClasses, setSignupClasses] = useState<string[]>([defaultInitialClass]);
+  const [signupSubjects, setSignupSubjects] = useState<string[]>([defaultInitialSubject]);
+  const [signupFormTeacherClass, setSignupFormTeacherClass] = useState<string>(defaultInitialClass);
+
+  // Sync state whenever settings change
+  React.useEffect(() => {
+    const pfx = settings.staffIdPrefix || 'STP/TCH/';
+    const num = teachers.length + 1;
+    setSignupStaffId(`${pfx}${String(num).padStart(3, '0')}`);
+    setSignupDept('Sciences & Mathematics');
+    const classes = getSchoolClasses(settings);
+    const initialCls = classes[0] || 'JSS 1 A';
+    setSignupClasses([initialCls]);
+    setSignupFormTeacherClass(initialCls);
+    setResultClass(initialCls);
+    setSignupSubjects(['MATHEMATICS']);
+    setSearchedStudent(null);
+    setResultLearnerId('');
+    setResultError(null);
+  }, [settings, teachers.length]);
 
   // Login State
   const [loginIdentifier, setLoginIdentifier] = useState('');
@@ -110,7 +134,7 @@ export const PortalGate: React.FC<PortalGateProps> = ({
 
   // Results Checker State
   const [resultLearnerId, setResultLearnerId] = useState('');
-  const [resultClass, setResultClass] = useState('JSS 1 A');
+  const [resultClass, setResultClass] = useState(defaultInitialClass);
   const [resultTerm, setResultTerm] = useState('Third Term');
   const [searchedStudent, setSearchedStudent] = useState<Student | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
@@ -148,6 +172,7 @@ export const PortalGate: React.FC<PortalGateProps> = ({
       prev.includes(sub) ? prev.filter(s => s !== sub) : [...prev, sub]
     );
   };
+
 
   const handleSelectAllJuniorSubjects = () => {
     const combined = Array.from(new Set([...signupSubjects, ...JUNIOR_SUBJECTS]));
@@ -300,22 +325,22 @@ export const PortalGate: React.FC<PortalGateProps> = ({
   const stampSrc = settings.schoolStamp || DEFAULT_OFFICIAL_STAMP;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-red-950">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
       {/* 1. TOP ANNOUNCEMENT & CLOUD STATUS STRIP */}
-      <div className="bg-gradient-to-r from-red-950 via-[#7a0c0c] to-red-950 border-b-2 border-amber-500 px-4 py-2.5 text-xs text-amber-200">
+      <div className="bg-white border-b border-slate-200 px-4 py-2.5 text-xs text-slate-700 shadow-2xs">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-bold text-white tracking-wide uppercase text-[11px]">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-bold text-slate-900 tracking-wide uppercase text-[11px]">
               Official Academic Portal Gate
             </span>
-            <span className="text-amber-400">•</span>
-            <span className="text-amber-200 font-medium">Session: {settings.session} ({settings.term})</span>
+            <span className="text-slate-300">•</span>
+            <span className="text-slate-600 font-medium">Session: {settings.session} ({settings.term})</span>
           </div>
 
           <div className="flex items-center space-x-3 text-[11px]">
-            <div className="flex items-center space-x-1.5 bg-black/40 px-2.5 py-1 rounded-full border border-amber-500/40 text-amber-300">
-              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+            <div className="flex items-center space-x-1.5 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-300 text-emerald-800 font-medium shadow-2xs">
+              <Cloud className="w-3.5 h-3.5 text-emerald-600" />
               <span>Cloud Firestore Synchronized (Never Lose Marks)</span>
             </div>
             <PWAInstallButton variant="gate" />
@@ -323,72 +348,40 @@ export const PortalGate: React.FC<PortalGateProps> = ({
         </div>
       </div>
 
-      {/* 2. MAJESTIC SCHOOL HERO HEADER */}
-      <header className="bg-gradient-to-b from-black via-slate-900 to-slate-950 border-b border-amber-500/30 py-8 px-4 sm:px-6 relative overflow-hidden">
+      {/* 2. MAJESTIC SCHOOL HERO HEADER (CLEAN WHITE) */}
+      <header className="bg-white border-b border-slate-200 py-8 px-4 sm:px-6 relative overflow-hidden shadow-xs">
         {/* Subtle decorative background watermarks */}
-        <div className="absolute top-0 right-0 w-96 h-96 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 left-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-0 right-0 w-96 h-96 bg-blue-50 rounded-full blur-3xl pointer-events-none opacity-60" />
+        <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-50 rounded-full blur-3xl pointer-events-none opacity-60" />
 
         <div className="max-w-6xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-6 relative z-10">
           <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left space-y-3 sm:space-y-0 sm:space-x-5">
-            <div className="w-24 h-24 rounded-2xl bg-white p-2 border-2 border-amber-400 shadow-2xl flex items-center justify-center shrink-0">
+            <div className="w-24 h-24 rounded-2xl bg-white p-2 border-2 border-blue-600 shadow-md flex items-center justify-center shrink-0">
               <img src={logoSrc} alt="School Crest" className="max-h-full max-w-full object-contain" />
             </div>
             <div>
-              <div className="inline-flex items-center space-x-1.5 px-3 py-0.5 rounded-full bg-amber-400 text-red-950 font-black text-[10px] uppercase tracking-wider mb-1.5 shadow-sm">
-                <Sparkles className="w-3 h-3" />
+              <div className="inline-flex items-center space-x-1.5 px-3 py-0.5 rounded-full bg-blue-50 text-blue-900 border border-blue-200 font-black text-[10px] uppercase tracking-wider mb-1.5 shadow-2xs">
+                <Sparkles className="w-3 h-3 text-blue-600" />
                 <span className="truncate max-w-xs">{settings.schoolAddress || 'Federal Capital Territory • Abuja'}</span>
               </div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black font-serif text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-100 tracking-wide">
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black font-serif text-slate-900 tracking-wide">
                 {settings.schoolName || 'ST. PAUL COLLEGE, GWAGWALADA'}
               </h1>
-              <p className="text-xs sm:text-sm text-slate-300 font-medium mt-1">
+              <p className="text-xs sm:text-sm text-slate-600 font-medium mt-1">
                 {settings.schoolMotto ? `"${settings.schoolMotto}" • Centralized Academic Portal` : 'Centralized Terminal Examination & Continuous Assessment Portal'}
               </p>
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-2 text-[11px] text-amber-300/90 font-mono">
-                <span>{teachers.length} Certified Teaching Staff</span>
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-2 text-[11px] text-slate-600 font-mono">
+                <span className="bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 font-bold text-slate-800">{teachers.length} Certified Teaching Staff</span>
                 <span>•</span>
-                <span>{students.length} Enrolled Learners</span>
+                <span className="bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 font-bold text-slate-800">{students.length} Enrolled Learners</span>
                 <span>•</span>
-                <span className="text-emerald-400 font-bold">100% Real-time Cloud Protection</span>
+                <span className="text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-300 font-bold">100% Real-time Cloud Protection</span>
               </div>
             </div>
           </div>
 
-          {/* Action buttons: Switch School, Register with Gmail, Direct Access */}
+          {/* Action buttons: Direct Access */}
           <div className="flex flex-wrap items-center justify-center gap-2.5 shrink-0">
-            {/* School Switcher Selector if multiple schools exist */}
-            {schoolRegistry && schoolRegistry.length > 1 && onSwitchSchool && (
-              <div className="flex items-center space-x-1.5 bg-slate-900/90 border border-amber-400/60 p-1.5 rounded-xl shadow-md text-xs">
-                <School className="w-4 h-4 text-amber-400 shrink-0 ml-1" />
-                <select
-                  value={activeSchoolId}
-                  onChange={e => onSwitchSchool(e.target.value)}
-                  className="bg-transparent text-amber-200 font-bold text-xs focus:outline-none pr-1 cursor-pointer"
-                  title="Switch between registered schools"
-                >
-                  {schoolRegistry.map(sch => (
-                    <option key={sch.id} value={sch.id} className="bg-slate-900 text-white font-medium">
-                      {sch.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Register another school with Gmail */}
-            {onOpenSchoolOnboarding && (
-              <button
-                type="button"
-                onClick={onOpenSchoolOnboarding}
-                className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs shadow-lg border border-emerald-300 hover:scale-105 transition-all"
-                title="Create an independent school portal using Gmail"
-              >
-                <School className="w-4 h-4" />
-                <span>Register School (Gmail) 🚀</span>
-              </button>
-            )}
-
             {/* Quick Portal Enter Option for Demo / Guest */}
             {onEnterPortalDirectly && (
               <button
@@ -396,7 +389,7 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                   setStaffPortalUnlocked();
                   onEnterPortalDirectly();
                 }}
-                className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-red-950 font-black text-xs shadow-lg border border-amber-300 hover:scale-105 transition-all"
+                className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md border border-blue-500 hover:scale-105 transition-all"
               >
                 <span>Direct Portal Access</span>
                 <ArrowRight className="w-4 h-4" />
@@ -407,8 +400,8 @@ export const PortalGate: React.FC<PortalGateProps> = ({
       </header>
 
       {/* 3. DUAL GATE SELECTOR (TEACHERS vs RESULTS CHECKER) */}
-      <div className="max-w-4xl mx-auto w-full px-4 -mt-5 relative z-20">
-        <div className="bg-slate-900/95 backdrop-blur-md p-1.5 rounded-2xl border-2 border-amber-400/80 shadow-2xl flex grid grid-cols-2 gap-1.5">
+      <div className="max-w-4xl mx-auto w-full px-4 relative z-20 -mt-4">
+        <div className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-lg flex grid grid-cols-2 gap-1.5">
           <button
             onClick={() => {
               setActivePortalGate('staff');
@@ -416,11 +409,11 @@ export const PortalGate: React.FC<PortalGateProps> = ({
             }}
             className={`flex items-center justify-center space-x-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black transition-all ${
               activePortalGate === 'staff'
-                ? 'bg-gradient-to-r from-red-800 to-red-900 text-amber-200 shadow-md border border-amber-400'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                ? 'bg-blue-600 text-white shadow-md border border-blue-500'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            <BookOpen className="w-4 h-4 text-amber-400" />
+            <BookOpen className={`w-4 h-4 ${activePortalGate === 'staff' ? 'text-white' : 'text-blue-600'}`} />
             <span>Academic Staff & Teachers Portal</span>
           </button>
 
@@ -428,11 +421,11 @@ export const PortalGate: React.FC<PortalGateProps> = ({
             onClick={() => { setActivePortalGate('results'); setGateError(null); }}
             className={`flex items-center justify-center space-x-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-black transition-all ${
               activePortalGate === 'results'
-                ? 'bg-gradient-to-r from-blue-900 to-indigo-900 text-amber-300 shadow-md border border-blue-400'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                ? 'bg-indigo-700 text-white shadow-md border border-indigo-600'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            <GraduationCap className="w-4 h-4 text-amber-400" />
+            <GraduationCap className={`w-4 h-4 ${activePortalGate === 'results' ? 'text-amber-300' : 'text-indigo-600'}`} />
             <span>Student & Parent Result Checker</span>
           </button>
         </div>
@@ -444,21 +437,21 @@ export const PortalGate: React.FC<PortalGateProps> = ({
         {/* PATHWAY 1: TEACHER & ACADEMIC STAFF PORTAL GATE                           */}
         {/* ========================================================================= */}
         {activePortalGate === 'staff' && (
-          <div className="bg-slate-900 rounded-2xl border-2 border-amber-500/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             {/* Top Sub-Header */}
-            <div className="bg-gradient-to-r from-red-950 via-[#7a0c0c] to-red-950 px-6 py-4 flex flex-wrap items-center justify-between border-b border-amber-500/50 gap-3">
+            <div className="bg-slate-50 px-6 py-4 flex flex-wrap items-center justify-between border-b border-slate-200 gap-3">
               <div>
-                <h3 className="text-base font-black text-amber-300 font-serif flex items-center gap-2">
-                  <ShieldCheck className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-black text-slate-900 font-serif flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-blue-600" />
                   <span>Academic Staff Grading & Comments Gateway</span>
                 </h3>
-                <p className="text-xs text-amber-100/80 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Authorized for Subject Teachers & Form Teachers to record continuous assessment (CA 1–4) & terminal exam marks.
                 </p>
               </div>
 
               {/* Sub-tab pills */}
-              <div className="flex bg-black/60 p-1 rounded-xl border border-amber-500/40 space-x-1">
+              <div className="flex bg-slate-200/80 p-1 rounded-xl border border-slate-300 space-x-1">
                 <button
                   onClick={() => {
                     setStaffTab('login');
@@ -466,8 +459,8 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
                     staffTab === 'login'
-                      ? 'bg-amber-400 text-red-950 shadow-sm'
-                      : 'text-amber-200 hover:text-white'
+                      ? 'bg-white text-blue-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   Staff Sign In
@@ -479,8 +472,8 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
                     staffTab === 'signup'
-                      ? 'bg-amber-400 text-red-950 shadow-sm'
-                      : 'text-amber-200 hover:text-white'
+                      ? 'bg-white text-blue-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   New Teacher Sign Up
@@ -490,77 +483,77 @@ export const PortalGate: React.FC<PortalGateProps> = ({
 
             {/* Error / Success Feedback */}
             {gateError && (
-              <div className="mx-6 mt-4 p-3 bg-red-950 border border-red-500 text-red-200 rounded-xl text-xs flex items-center space-x-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
                 <span>{gateError}</span>
               </div>
             )}
 
             {gateSuccess && (
-              <div className="mx-6 mt-4 p-3 bg-emerald-950 border border-emerald-500 text-emerald-200 rounded-xl text-xs flex items-center space-x-2 animate-pulse">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div className="mx-6 mt-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center space-x-2 animate-pulse">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>{gateSuccess}</span>
               </div>
             )}
 
-            <div className="p-6">
+            <div className="p-6 sm:p-8">
               {/* 1A. STAFF SIGN IN */}
               {staffTab === 'login' && (
                 <form onSubmit={handleLoginSubmit} className="max-w-md mx-auto space-y-4">
                   <div className="text-center pb-2">
-                    <h4 className="text-base font-bold text-white">Sign In to Your Teacher Account</h4>
-                    <p className="text-xs text-slate-400">
-                      Sign in using your <span className="text-amber-300 font-bold">First Name, Last Name</span>, Staff ID (e.g. <span className="font-mono text-amber-300">STP/TCH/001</span>), or registered email.
+                    <h4 className="text-base font-bold text-slate-900">Sign In to Your Teacher Account</h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Sign in using your <span className="text-blue-600 font-bold">First Name, Last Name</span>, Staff ID (e.g. <span className="font-mono text-blue-600">STP/TCH/001</span>), or registered email.
                     </p>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-amber-200 uppercase tracking-wider mb-1">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                       First Name, Last Name, Staff ID, or Email *
                     </label>
                     <div className="relative">
-                      <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                      <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                       <input
                         type="text"
                         required
-                        placeholder="e.g. Jude, Chioma, STP/TCH/001, or teacher@stpaul.edu.ng"
+                        placeholder="e.g. Staff ID (STP/ADMIN/001), Name, or Email"
                         value={loginIdentifier}
                         onChange={e => setLoginIdentifier(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl pl-9 pr-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl pl-9 pr-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs placeholder:text-slate-400"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-amber-200 uppercase tracking-wider mb-1">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                       Password (Optional for Demo)
                     </label>
                     <div className="relative">
-                      <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                       <input
                         type="password"
                         placeholder="•••••••• (Leave blank to use default demo pass)"
                         value={loginPassword}
                         onChange={e => setLoginPassword(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl pl-9 pr-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl pl-9 pr-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs placeholder:text-slate-400"
                       />
                     </div>
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-red-950 font-black text-xs rounded-xl shadow-lg border border-amber-300 transition"
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs rounded-xl shadow-md border border-blue-500 transition"
                   >
                     Authenticate & Enter Gradebook →
                   </button>
 
                   <div className="pt-2 text-center space-y-1">
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-slate-500">
                       New academic staff?{' '}
                       <button
                         type="button"
                         onClick={() => setStaffTab('signup')}
-                        className="font-bold text-amber-400 hover:underline"
+                        className="font-bold text-blue-600 hover:underline"
                       >
                         Self-Register Here
                       </button>
@@ -578,7 +571,7 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                             setTimeout(() => onAuthenticateSuccess(adminTeacher), 300);
                           }
                         }}
-                        className="font-bold text-amber-400 hover:text-amber-300 underline"
+                        className="font-bold text-blue-600 hover:text-blue-800 underline"
                       >
                         Super Admin Master Sign In →
                       </button>
@@ -591,32 +584,32 @@ export const PortalGate: React.FC<PortalGateProps> = ({
               {staffTab === 'signup' && (
                 <form onSubmit={handleSignupSubmit} className="space-y-6 max-w-2xl mx-auto">
                   <div className="text-center pb-2">
-                    <h4 className="text-base font-bold text-white flex items-center justify-center gap-2">
-                      <UserPlus className="w-5 h-5 text-amber-400" />
+                    <h4 className="text-base font-bold text-slate-900 flex items-center justify-center gap-2">
+                      <UserPlus className="w-5 h-5 text-blue-600" />
                       <span>Teacher Identity &amp; Subject Assignment</span>
                     </h4>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Enter your First and Last name to assign your teaching classes and subjects in <span className="text-amber-300 font-bold">ONE direct step</span>.
+                    <p className="text-xs text-slate-500 mt-1">
+                      Enter your First and Last name to assign your teaching classes and subjects in <span className="text-blue-600 font-bold">ONE direct step</span>.
                     </p>
                   </div>
 
                   {/* First Name & Last Name Identity Block */}
-                  <div className="bg-slate-950/80 p-4 rounded-xl border border-amber-500/30 space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                      <h5 className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
-                        <User className="w-3.5 h-3.5 text-amber-400" />
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <h5 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <User className="w-3.5 h-3.5 text-blue-600" />
                         <span>Teacher Identity &amp; Full Name</span>
                       </h5>
-                      <span className="text-[10px] bg-amber-400/20 text-amber-300 px-2 py-0.5 rounded font-mono font-bold">Single-Step Onboarding</span>
+                      <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono font-bold">Single-Step Onboarding</span>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
                       <div className="sm:col-span-3">
-                        <label className="block text-xs font-bold text-amber-200 mb-1">Title</label>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Title</label>
                         <select
                           value={signupTitle}
                           onChange={e => setSignupTitle(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-2.5 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                          className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl px-2.5 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
                         >
                           <option value="Mr.">Mr.</option>
                           <option value="Mrs.">Mrs.</option>
@@ -631,35 +624,35 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                       </div>
 
                       <div className="sm:col-span-4">
-                        <label className="block text-xs font-bold text-amber-200 mb-1">First Name *</label>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">First Name *</label>
                         <input
                           type="text"
                           required
-                          placeholder="e.g. Emmanuel"
+                          placeholder="First Name"
                           value={signupFirstName}
                           onChange={e => setSignupFirstName(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none font-medium"
+                          className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none font-medium shadow-2xs"
                         />
                       </div>
 
                       <div className="sm:col-span-5">
-                        <label className="block text-xs font-bold text-amber-200 mb-1">Last Name (Surname) *</label>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Last Name (Surname) *</label>
                         <input
                           type="text"
                           required
                           placeholder="e.g. Okon"
                           value={signupLastName}
                           onChange={e => setSignupLastName(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none font-medium"
+                          className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none font-medium shadow-2xs"
                         />
                       </div>
                     </div>
 
                     {/* Live Assignment Preview */}
                     {(signupFirstName || signupLastName) && (
-                      <div className="p-2.5 bg-amber-400/10 border border-amber-400/30 rounded-xl flex items-center justify-between text-xs">
-                        <span className="text-slate-300">Roster Assignment Preview:</span>
-                        <span className="text-amber-300 font-bold font-serif text-sm">
+                      <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between text-xs">
+                        <span className="text-slate-600">Roster Assignment Preview:</span>
+                        <span className="text-blue-900 font-bold font-serif text-sm">
                           {[signupTitle, signupFirstName.trim(), signupLastName.trim()].filter(Boolean).join(' ')}
                         </span>
                       </div>
@@ -668,32 +661,32 @@ export const PortalGate: React.FC<PortalGateProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-amber-200 mb-1">Generated Staff ID</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Generated Staff ID</label>
                       <input
                         type="text"
                         value={signupStaffId}
                         onChange={e => setSignupStaffId(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-amber-500/50 text-amber-300 font-mono text-xs rounded-xl px-3 py-2.5 font-bold"
+                        className="w-full bg-slate-50 border border-slate-300 text-slate-800 font-mono text-xs rounded-xl px-3 py-2.5 font-bold shadow-2xs"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-amber-200 mb-1">Email Address (Optional)</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Email Address (Optional)</label>
                       <input
                         type="email"
                         placeholder="teacher@stpaulcollege.abjce.org.ng"
                         value={signupEmail}
                         onChange={e => setSignupEmail(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-amber-200 mb-1">Staff Role</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Staff Role</label>
                       <select
                         value={signupRole}
                         onChange={e => setSignupRole(e.target.value as UserRole)}
-                        className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
                       >
                         <option value="subject_teacher">Subject Specialist (Grading)</option>
                         <option value="form_teacher">Class Form Teacher (Grading + Class Remarks)</option>
@@ -702,11 +695,11 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-amber-200 mb-1">Department</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Department</label>
                       <select
                         value={signupDept}
                         onChange={e => setSignupDept(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full bg-white border border-slate-300 text-slate-900 text-xs rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
                       >
                         <option value="Sciences & Mathematics">Sciences & Mathematics</option>
                         <option value="Humanities & Arts">Humanities & Arts</option>
@@ -721,26 +714,26 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                   {/* Class selection */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-bold text-amber-200 uppercase">
+                      <label className="text-xs font-bold text-slate-700 uppercase">
                         Select Classes You Teach ({signupClasses.length} Selected) *
                       </label>
                     </div>
                     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                      {SCHOOL_CLASSES.map(cls => {
+                      {availableSchoolClasses.map(cls => {
                         const isSelected = signupClasses.includes(cls);
                         return (
                           <button
                             key={cls}
                             type="button"
                             onClick={() => handleToggleClass(cls)}
-                            className={`p-2 rounded-xl text-center font-bold text-xs transition border flex items-center justify-between ${
+                            className={`p-2 rounded-xl text-center font-bold text-xs transition border flex items-center justify-between shadow-2xs ${
                               isSelected
-                                ? 'bg-red-900 text-amber-300 border-amber-400 shadow-sm'
-                                : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800'
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                             }`}
                           >
                             <span>{cls}</span>
-                            {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                            {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-white shrink-0" />}
                           </button>
                         );
                       })}
@@ -750,14 +743,14 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                   {/* Subject selection */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-bold text-amber-200 uppercase">
+                      <label className="text-xs font-bold text-slate-700 uppercase">
                         Select Subjects You Teach ({signupSubjects.length} Selected) *
                       </label>
-                      <div className="space-x-2 text-[10px]">
+                      <div className="flex items-center space-x-2 text-[10px]">
                         <button
                           type="button"
                           onClick={handleSelectAllJuniorSubjects}
-                          className="text-amber-400 hover:underline font-bold"
+                          className="text-blue-600 hover:underline font-bold"
                         >
                           + All Junior
                         </button>
@@ -765,14 +758,14 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                         <button
                           type="button"
                           onClick={handleSelectAllSeniorSubjects}
-                          className="text-amber-400 hover:underline font-bold"
+                          className="text-blue-600 hover:underline font-bold"
                         >
                           + All Senior
                         </button>
                       </div>
                     </div>
 
-                    <div className="border border-slate-800 rounded-xl p-3 bg-slate-950 max-h-48 overflow-y-auto flex flex-wrap gap-1.5">
+                    <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 max-h-48 overflow-y-auto flex flex-wrap gap-1.5 shadow-inner">
                       {[...JUNIOR_SUBJECTS, ...SENIOR_SUBJECTS].filter((v, i, a) => a.indexOf(v) === i).map(sub => {
                         const isSelected = signupSubjects.includes(sub);
                         return (
@@ -780,14 +773,14 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                             key={sub}
                             type="button"
                             onClick={() => handleToggleSubject(sub)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition border flex items-center space-x-1 ${
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition border flex items-center space-x-1 shadow-2xs ${
                               isSelected
-                                ? 'bg-amber-500 text-red-950 border-amber-400 font-bold'
-                                : 'bg-slate-900 text-slate-400 border-slate-700 hover:bg-slate-800'
+                                ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                             }`}
                           >
                             <span>{sub}</span>
-                            {isSelected && <CheckCircle2 className="w-3 h-3 text-red-950 shrink-0" />}
+                            {isSelected && <CheckCircle2 className="w-3 h-3 text-white shrink-0" />}
                           </button>
                         );
                       })}
@@ -796,9 +789,9 @@ export const PortalGate: React.FC<PortalGateProps> = ({
 
                   <button
                     type="submit"
-                    className="w-full py-3.5 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-red-950 font-black text-xs rounded-xl shadow-xl border border-amber-300 transition flex items-center justify-center space-x-2"
+                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs rounded-xl shadow-lg border border-blue-500 transition flex items-center justify-center space-x-2"
                   >
-                    <UserPlus className="w-4 h-4 text-red-950" />
+                    <UserPlus className="w-4 h-4 text-white" />
                     <span>Assign Teacher &amp; Enter Gradebook in ONCE →</span>
                   </button>
                 </form>
@@ -812,16 +805,16 @@ export const PortalGate: React.FC<PortalGateProps> = ({
         {/* ========================================================================= */}
         {activePortalGate === 'results' && (
           <div className="space-y-6">
-            <div className="bg-slate-900 rounded-2xl border-2 border-blue-500/80 shadow-2xl overflow-hidden p-6 sm:p-8">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden p-6 sm:p-8">
               <div className="text-center max-w-xl mx-auto pb-6">
-                <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-blue-900/60 border border-blue-400 text-blue-200 text-xs font-bold uppercase tracking-wider mb-2">
-                  <GraduationCap className="w-4 h-4 text-amber-400" />
+                <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-900 text-xs font-bold uppercase tracking-wider mb-2 shadow-2xs">
+                  <GraduationCap className="w-4 h-4 text-blue-600" />
                   <span>Terminal Examination Result Portal</span>
                 </div>
-                <h3 className="text-xl sm:text-2xl font-black text-white font-serif">
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 font-serif">
                   Check St. Paul College Terminal Result Sheet
                 </h3>
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="text-xs text-slate-500 mt-1">
                   Enter student Learner ID / Admission number to view and print the official stamped terminal report card.
                 </p>
               </div>
@@ -830,7 +823,7 @@ export const PortalGate: React.FC<PortalGateProps> = ({
               <form onSubmit={handleCheckResult} className="max-w-2xl mx-auto space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-blue-200 uppercase mb-1">
+                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
                       Learner ID / Admission Number *
                     </label>
                     <div className="relative">
@@ -841,19 +834,19 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                         placeholder="e.g. STP/2024/001"
                         value={resultLearnerId}
                         onChange={e => setResultLearnerId(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 text-white text-xs font-bold rounded-xl pl-9 pr-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        className="w-full bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-xl pl-9 pr-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-blue-200 uppercase mb-1">
+                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
                       Term
                     </label>
                     <select
                       value={resultTerm}
                       onChange={e => setResultTerm(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 text-white text-xs font-bold rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      className="w-full bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs"
                     >
                       <option value="Third Term">Third Term (Terminal)</option>
                       <option value="Second Term">Second Term</option>
@@ -864,14 +857,14 @@ export const PortalGate: React.FC<PortalGateProps> = ({
 
                 {/* Quick Select Chips if real students exist */}
                 {students && students.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
-                    <span className="text-[11px] font-bold text-amber-300">Enrolled Students:</span>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600">
+                    <span className="text-[11px] font-bold text-blue-800">Enrolled Students:</span>
                     {students.slice(0, 4).map(st => (
                       <button
                         key={st.id}
                         type="button"
                         onClick={() => handleSelectQuickChip(st.learnerId, st.className)}
-                        className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md border border-slate-700 text-[11px] font-mono transition"
+                        className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border border-slate-300 text-[11px] font-mono transition shadow-2xs"
                       >
                         {st.learnerId}
                       </button>
@@ -880,8 +873,8 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                 )}
 
                 {resultError && (
-                  <div className="p-3 bg-red-950 border border-red-500 text-red-200 rounded-xl text-xs flex items-center space-x-2">
-                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
                     <span>{resultError}</span>
                   </div>
                 )}
@@ -889,11 +882,11 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                 <button
                   type="submit"
                   disabled={isSearchingCloud}
-                  className="w-full py-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-60 text-white font-black text-xs rounded-xl shadow-lg border border-blue-400 transition flex items-center justify-center space-x-2"
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-black text-xs rounded-xl shadow-lg border border-blue-500 transition flex items-center justify-center space-x-2"
                 >
                   {isSearchingCloud ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin text-amber-300" />
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
                       <span>Checking Direct Cloud Storage & Local Cache...</span>
                     </>
                   ) : (
@@ -907,18 +900,18 @@ export const PortalGate: React.FC<PortalGateProps> = ({
             {searchedStudent && (
               <div 
                 id="portal-printable-result"
-                className="bg-white text-slate-900 rounded-2xl shadow-2xl border-4 border-amber-400 overflow-hidden animate-in fade-in duration-300 print:shadow-none print:border-2"
+                className="bg-white text-slate-900 rounded-2xl shadow-2xl border-4 border-blue-600 overflow-hidden animate-in fade-in duration-300 print:shadow-none print:border-2"
               >
                 {/* Official School Header */}
-                <div className="bg-[#7a0c0c] text-white p-5 border-b-2 border-amber-400 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="bg-blue-900 text-white p-5 border-b-2 border-blue-400 flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div className="flex items-center space-x-4">
-                    <div className="w-16 h-16 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 border border-amber-400">
+                    <div className="w-16 h-16 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 border border-blue-300">
                       <img src={logoSrc} alt="Crest" className="max-h-full max-w-full object-contain" />
                     </div>
                     <div>
-                      <h2 className="text-xl font-black font-serif text-amber-300">ST. PAUL COLLEGE, GWAGWALADA</h2>
-                      <p className="text-xs text-amber-100 font-medium">OFFICIAL TERMINAL STUDENT REPORT SHEET</p>
-                      <p className="text-[11px] text-amber-200/80 font-mono">Academic Session: {settings.session} • {resultTerm}</p>
+                      <h2 className="text-xl font-black font-serif text-white">ST. PAUL COLLEGE, GWAGWALADA</h2>
+                      <p className="text-xs text-blue-200 font-medium">OFFICIAL TERMINAL STUDENT REPORT SHEET</p>
+                      <p className="text-[11px] text-blue-300/90 font-mono">Academic Session: {settings.session} • {resultTerm}</p>
                     </div>
                   </div>
 
@@ -1113,17 +1106,17 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                       type="button"
                       onClick={handleExportPortalPDF}
                       disabled={isExportingPDF}
-                      className="flex items-center space-x-1.5 px-4 py-2 bg-gradient-to-r from-red-800 to-red-950 hover:from-red-900 hover:to-black text-amber-300 border border-amber-500 font-bold text-xs rounded-xl shadow-md transition disabled:opacity-50"
+                      className="flex items-center space-x-1.5 px-4 py-2 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white border border-blue-400 font-bold text-xs rounded-xl shadow-md transition disabled:opacity-50"
                       title="Download official PDF guaranteed to fit on exactly 1 page"
                     >
                       {isExportingPDF ? (
                         <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin text-white" />
                           <span>Generating 1-Page PDF...</span>
                         </>
                       ) : (
                         <>
-                          <Download className="w-4 h-4 text-amber-300" />
+                          <Download className="w-4 h-4 text-white" />
                           <span>Download 1-Page PDF</span>
                         </>
                       )}
@@ -1132,20 +1125,20 @@ export const PortalGate: React.FC<PortalGateProps> = ({
                     <button
                       type="button"
                       onClick={() => window.print()}
-                      className="flex items-center space-x-1.5 px-4 py-2 bg-[#7a0c0c] hover:bg-red-800 text-white font-bold text-xs rounded-xl shadow-md transition"
+                      className="flex items-center space-x-1.5 px-4 py-2 bg-blue-900 hover:bg-blue-950 text-white font-bold text-xs rounded-xl shadow-md transition"
                       title="Print or Save as PDF strictly formatted to 1 single page"
                     >
-                      <Printer className="w-4 h-4 text-amber-300" />
+                      <Printer className="w-4 h-4 text-white" />
                       <span>Print Report (1 Page)</span>
                     </button>
                     {onUpdateStudent && (
                       <button
                         type="button"
                         onClick={() => setIsBiodataModalOpen(true)}
-                        className="flex items-center space-x-1.5 px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-red-950 font-bold text-xs rounded-xl shadow-xs transition"
+                        className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-900 font-bold text-xs rounded-xl border border-blue-200 shadow-2xs transition"
                         title="Edit learner profile and biodata"
                       >
-                        <Edit3 className="w-4 h-4 text-red-950" />
+                        <Edit3 className="w-4 h-4 text-blue-700" />
                         <span>Edit Learner Biodata</span>
                       </button>
                     )}
@@ -1192,7 +1185,7 @@ export const PortalGate: React.FC<PortalGateProps> = ({
       )}
 
       {/* 5. PORTAL GATE FOOTER */}
-      <footer className="bg-black/90 border-t border-amber-500/20 py-4 px-4 text-center text-xs text-slate-500">
+      <footer className="bg-white border-t border-slate-200 py-5 px-4 text-center text-xs text-slate-500 shadow-2xs">
         <p>
           © {new Date().getFullYear()} {settings.schoolName || 'ST. PAUL COLLEGE'}, {settings.schoolAddress || 'GWAGWALADA, ABUJA FCT'}. All continuous assessments, marks, rankings, and examination results are strictly governed by College Academic Standards.
         </p>
